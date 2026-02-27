@@ -155,3 +155,31 @@ Planned next implementation milestone:
 - Implement kitchen queue worker processing
 - Implement notification hub socket flow + `/notify`
 - Connect UI live status updates (`/status`)
+
+---
+
+## 8) Automated Test Files (Day 1 + Day 2)
+
+A root-level system test script is included:
+
+- `tests/system.test.mjs`
+
+It validates:
+
+- Service health checks (`identity-provider`, `order-gateway`, `stock-service`)
+- Day 1 login success and rate-limiting behavior
+- Day 2 JWT protection on `/order`
+- Day 2 successful order flow
+- Day 2 cache pre-check block when Redis has `stock:{itemId} = 0`
+
+Run it from repo root (with Docker services running):
+
+```bash
+npm run test:day1-day2
+```
+
+If needed, override service URLs:
+
+```bash
+IDENTITY_URL=http://localhost:3001 GATEWAY_URL=http://localhost:3000 STOCK_URL=http://localhost:3002 npm run test:day1-day2
+```

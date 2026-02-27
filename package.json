@@ -1,0 +1,9 @@
+{
+  "name": "devsprint-2026-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Root-level system test scripts for Day 1 and Day 2",
+  "scripts": {
+    "test": "node tests/system.test.mjs"
+  }
+}
