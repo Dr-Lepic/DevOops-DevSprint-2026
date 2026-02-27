@@ -1,0 +1,106 @@
+services:
+  identity-provider:
+    build:
+      context: ./identity-provider
+      dockerfile: Dockerfile
+    container_name: identity-provider
+    ports:
+      - "3001:3001"
+    environment:
+      JWT_SECRET: supersecret2026
+      REDIS_URL: redis://redis:6379
+      PORT: 3001
+      NODE_ENV: production
+    depends_on:
+      - redis
+    networks:
+      - cafeteria_net
+
+  student-ui:
+    build:
+      context: ./student-ui
+      dockerfile: Dockerfile
+    container_name: student-ui
+    ports:
+      - "3004:3004"
+    environment:
+      NEXT_PUBLIC_GATEWAY_URL: http://localhost:3000
+      NEXT_PUBLIC_IDENTITY_URL: http://localhost:3001
+      NEXT_PUBLIC_HUB_URL: http://localhost:3003
+      PORT: 3004
+    depends_on:
+      - identity-provider
+    networks:
+      - cafeteria_net
+
+  order-gateway:
+    image: node:20-alpine
+    container_name: order-gateway
+    command: ["sh", "-c", "sleep infinity"]
+    ports:
+      - "3000:3000"
+    depends_on:
+      - identity-provider
+      - redis
+    networks:
+      - cafeteria_net
+
+  stock-service:
+    image: node:20-alpine
+    container_name: stock-service
+    command: ["sh", "-c", "sleep infinity"]
+    ports:
+      - "3002:3002"
+    depends_on:
+      - db
+      - redis
+    networks:
+      - cafeteria_net
+
+  kitchen-queue:
+    image: node:20-alpine
+    container_name: kitchen-queue
+    command: ["sh", "-c", "sleep infinity"]
+    depends_on:
+      - redis
+    networks:
+      - cafeteria_net
+
+  notification-hub:
+    image: node:20-alpine
+    container_name: notification-hub
+    command: ["sh", "-c", "sleep infinity"]
+    ports:
+      - "3003:3003"
+    networks:
+      - cafeteria_net
+
+  db:
+    image: postgres:16-alpine
+    container_name: db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: cafeteria
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    networks:
+      - cafeteria_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - cafeteria_net
+
+networks:
+  cafeteria_net:
+    driver: bridge
+
+volumes:
+  postgres_data:

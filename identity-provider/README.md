@@ -20,6 +20,8 @@ PORT=3001
 NODE_ENV=development
 ```
 
+Production defaults can use `NODE_ENV=production`.
+
 ## Mock Users
 
 For testing, the following users are available:
@@ -92,4 +94,7 @@ docker build -t identity-provider .
 
 # Run container
 docker run -p 3001:3001 --env-file .env identity-provider
+
+# Verify health
+docker ps
 ```
