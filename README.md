@@ -175,7 +175,7 @@ It validates:
 Run it from repo root (with Docker services running):
 
 ```bash
-npm run test:day1-day2
+npm run test
 ```
 
 If needed, override service URLs:
