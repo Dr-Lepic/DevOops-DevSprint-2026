@@ -34,23 +34,38 @@ services:
       - cafeteria_net
 
   order-gateway:
-    image: node:20-alpine
+    build:
+      context: ./order-gateway
+      dockerfile: Dockerfile
     container_name: order-gateway
-    command: ["sh", "-c", "sleep infinity"]
     ports:
       - "3000:3000"
+    environment:
+      JWT_SECRET: supersecret2026
+      REDIS_URL: redis://redis:6379
+      STOCK_SERVICE_URL: http://stock-service:3002
+      PORT: 3000
+      NODE_ENV: production
+      QUEUE_NAME: cook_order
     depends_on:
       - identity-provider
       - redis
+      - stock-service
     networks:
       - cafeteria_net
 
   stock-service:
-    image: node:20-alpine
+    build:
+      context: ./stock-service
+      dockerfile: Dockerfile
     container_name: stock-service
-    command: ["sh", "-c", "sleep infinity"]
     ports:
       - "3002:3002"
+    environment:
+      DATABASE_URL: postgres://user:pass@db:5432/cafeteria
+      REDIS_URL: redis://redis:6379
+      PORT: 3002
+      NODE_ENV: production
     depends_on:
       - db
       - redis
