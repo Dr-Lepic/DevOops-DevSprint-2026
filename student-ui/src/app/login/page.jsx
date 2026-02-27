@@ -1,9 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import axios from 'axios';
 
 export default function LoginPage() {
+  const router = useRouter();
   const [studentId, setStudentId] = useState('');
   const [password, setPassword] = useState('');
   const [token, setToken] = useState('');
@@ -34,6 +36,8 @@ export default function LoginPage() {
         window.localStorage.setItem('cafeteria_token', receivedToken);
         window.localStorage.setItem('cafeteria_student_id', response.data?.studentId || studentId);
       }
+
+      router.push('/order');
     } catch (error) {
       const statusCode = error?.response?.status;
       if (statusCode === 401) {

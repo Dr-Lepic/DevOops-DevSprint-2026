@@ -2,6 +2,54 @@
 
 This document outlines the detailed master plan designed to guide an AI Agent in building a fault-tolerant, scalable microservice system over a 5-day hackathon. 
 
+## 0. Implementation Status Snapshot (Updated: 2026-02-27)
+
+This section records actual implementation progress so team members can quickly see what is done vs planned.
+
+### ✅ Completed (Day 1 + Day 2 Scope)
+- Identity Provider implemented in `identity-provider/`:
+  - `POST /login` with payload validation
+  - JWT issuance (`{ token, studentId }`)
+  - Redis-backed rate limit: 3 attempts per minute (IP or `studentId`)
+  - `GET /health`
+- Student UI login implemented in `student-ui/`:
+  - Next.js App Router setup
+  - `/login` page calls Identity Provider and stores token locally
+- Day 2 backend services implemented:
+  - `order-gateway/` with JWT auth middleware and `POST /order`
+  - Redis pre-check on `stock:{itemId}` (fail-open on cache miss, fail-closed on cached `<= 0`)
+  - Retry-with-backoff on stock-service `409` conflicts
+  - BullMQ enqueue on successful stock deduction
+  - `stock-service/` with `POST /deduct` optimistic locking
+  - Redis cache sync after successful deduction
+- Student UI order flow implemented:
+  - `/order` page calls gateway using Bearer token
+  - login redirects to `/order`
+- Database initialization implemented:
+  - `db/init/001_init.sql` creates `items(id, name, quantity, version)`
+  - seed rows for test stock
+- Root Docker Compose implemented:
+  - Infrastructure + network wiring in `docker-compose.yml`
+  - Day 2 services (`order-gateway`, `stock-service`) use real build/run config
+  - Day 3+ services (`kitchen-queue`, `notification-hub`) still placeholders
+
+### ✅ Verification Completed
+- `identity-provider`: TypeScript build succeeded
+- `student-ui`: install + production build succeeded
+- `order-gateway`: install + TypeScript build succeeded
+- `stock-service`: install + TypeScript build succeeded
+- Docker image builds succeeded for `identity-provider`, `order-gateway`, and `stock-service`
+- Runtime smoke checks passed:
+  - `GET /health` returns healthy response
+  - valid `POST /login` returns token
+  - repeated logins trigger `429` rate limit on 4th request
+  - valid `POST /order` returns `201` after Redis stock key seed
+
+### ⏳ Pending (Expected for Day 3+)
+- `kitchen-queue` BullMQ worker logic
+- `notification-hub` Socket.io + `/notify`
+- Student UI live status/admin pages (`/status`, `/admin`)
+
 ## 1. System Architecture & Tech Stack
 
 The system is designed for a Free Tier deployment (e.g., a single AWS EC2 t3.micro instance) and leverages the following stack:
@@ -164,10 +212,26 @@ This section breaks down the *exact* logical flow, network connections, and code
 - Impl Identity Provider `/login` and Next.js `/login` UI.
 - Setup PostgreSQL schema with the `version` column.
 
+#### Day 1 Actual Status: ✅ Completed
+- Implemented in repository:
+  - `identity-provider/`
+  - `student-ui/`
+  - `db/init/001_init.sql`
+  - root `docker-compose.yml`
+- All Day 1 deliverables are present and runnable for manual testing.
+
 ### Day 2: Core Routing & Stock Protection
 - Impl Order Gateway token verification and Redis Pre-check.
 - Impl Stock Service `POST /deduct` with Optimistic Locking.
 - Next.js: Complete `/order` UI flow.
+
+#### Day 2 Actual Status: ✅ Completed
+- Implemented in repository:
+  - `order-gateway/`
+  - `stock-service/`
+  - `student-ui/src/app/order/page.jsx`
+  - updated `docker-compose.yml` for real Day 2 services
+- End-to-end path verified: login -> gateway order -> stock deduction -> queue enqueue.
 
 ### Day 3: Queues & Sockets
 - Route successful Gateway orders into the Redis Queue.
