@@ -73,20 +73,32 @@ services:
       - cafeteria_net
 
   kitchen-queue:
-    image: node:20-alpine
+    build:
+      context: ./kitchen-queue
+      dockerfile: Dockerfile
     container_name: kitchen-queue
-    command: ["sh", "-c", "sleep infinity"]
+    environment:
+      REDIS_URL: redis://redis:6379
+      NOTIFICATION_HUB_URL: http://notification-hub:3003
+      QUEUE_NAME: cook_order
+      NODE_ENV: production
     depends_on:
       - redis
+      - notification-hub
     networks:
       - cafeteria_net
 
   notification-hub:
-    image: node:20-alpine
+    build:
+      context: ./notification-hub
+      dockerfile: Dockerfile
     container_name: notification-hub
-    command: ["sh", "-c", "sleep infinity"]
     ports:
       - "3003:3003"
+    environment:
+      PORT: 3003
+      NODE_ENV: production
+      CORS_ORIGIN: http://localhost:3004
     networks:
       - cafeteria_net
 
