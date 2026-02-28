@@ -1,0 +1,22 @@
+{
+  "name": "kitchen-queue",
+  "version": "1.0.0",
+  "description": "Kitchen Queue Worker for DevSprint 2026",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "bullmq": "^5.35.2",
+    "dotenv": "^16.4.7",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
