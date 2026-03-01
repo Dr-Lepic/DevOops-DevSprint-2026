@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "description": "Root-level system test scripts for Day 1 and Day 2",
   "scripts": {
-    "test": "node tests/system.test.mjs"
+    "test": "node tests/system.test.mjs",
+    "test:unit": "npm --prefix stock-service run test && npm --prefix kitchen-queue run test && npm --prefix order-gateway run test && npm --prefix identity-provider run test && npm --prefix notification-hub run test"
   },
   "devDependencies": {
     "socket.io-client": "^4.8.3"
