@@ -63,15 +63,16 @@ This section records actual implementation progress so team members can quickly 
   - Notification hub broadcasts via Socket.io
   - Real-time status updates visible on `/status` page
 
-### ⏳ Pending (Expected for Day 4+)
-- ~~Admin dashboard for monitoring all orders (`/admin`)~~ ✅ Completed (Day 4)
-- ~~Prometheus `/metrics` endpoints~~ ✅ Completed (Day 4)
-- ~~Health check endpoints with detailed service status~~ ✅ Completed (Day 4)
-- ~~Idempotency logic refinement in Kitchen Worker~~ ✅ Completed (Day 4)
-- ~~Visual Alert bonus (Warning on UI if Gateway latency >1s)~~ ✅ Completed (Day 4)
-- Chaos engineering toggle
-- CI/CD pipeline with GitHub Actions
-- Unit tests for critical services
+### ⏳ Pending (Expected for Day 5+)
+- None! All core hackathon tasks are complete.
+
+### ✅ Completed (Day 5 Scope)
+- Installed `jest` and `ts-jest` for automated unit testing.
+- Written 30+ passing unit tests covering all 5 core APIs and functions: `orderController`, `stockController`, `idempotencyService`, `authController`, `notifyController`.
+- Hardened `docker-compose.yml` with proper inline health-checks for Redis and Postgres databases, leveraging `depends_on: { condition: service_healthy }` to orchestrate booting safely.
+- Implemented `chaosMiddleware.ts` for chaos engineering: injecting random 500 errors (5%) and latency spikes up to 5s (10%) on API calls. Added chaos task failures to BullMQ worker queue.
+- Generated `.github/workflows/ci.yml` pipeline that correctly tests standard Node endpoints and executes Docker build checks before system-level testing.
+- Composed a comprehensive `guide.md` specifying external setup tasks for GitHub, AWS EC2 `t3.micro` launch configuration, DNS/IP assignment, and live Chaos testing instructions.
 
 ### ✅ Completed (Day 4 Scope)
 - Prometheus `/metrics` endpoints added to all 5 backend services using `prom-client`:

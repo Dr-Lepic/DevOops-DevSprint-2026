@@ -8,4 +8,5 @@ export const config = {
   queueName: process.env.QUEUE_NAME || 'cook_order',
   nodeEnv: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '3005', 10),
+  chaosEnabled: process.env.CHAOS_ENABLED === 'true',
 };
