@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execSync } from 'node:child_process';
+import { io as ioClient } from 'socket.io-client';
 
 const config = {
   identityUrl: process.env.IDENTITY_URL ?? 'http://localhost:3001',
@@ -385,6 +386,213 @@ async function main() {
       'Thundering herd test',
       'Requires token + Redis + DB containers'
     );
+  }
+
+  // ─── Improvement Tests ──────────────────────────────────────────────
+  log('\n─── Improvement Tests ───');
+
+  // Improvement #4: BullMQ retry config — verify job options
+  if (token && redisAvailable && dbAvailable) {
+    try {
+      // Reset stock
+      runDockerDbSql(
+        "UPDATE items SET quantity = 50, version = 0 WHERE id = 'iftar-box-01';"
+      );
+      runDockerRedis('SET stock:iftar-box-01 50');
+
+      // Place an order so a job is enqueued
+      const order = await requestJson(`${config.gatewayUrl}/order`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+        body: JSON.stringify({ itemId: 'iftar-box-01', quantity: 1 }),
+      });
+      assert(order.status === 201, `Expected 201, got ${order.status}`);
+
+      // Give BullMQ a moment to persist the job
+      await new Promise((r) => setTimeout(r, 500));
+
+      // Inspect the latest job in the queue. BullMQ stores job data as
+      // a hash at bull:<queue>:<id>. The 'opts' field is a JSON string
+      // containing attempts/backoff.  We look at the latest job ID from
+      // the queue counter.
+      const jobCounterRaw = runDockerRedis('GET bull:cook_order:id');
+      const latestId = parseInt(jobCounterRaw, 10);
+      assert(!isNaN(latestId) && latestId > 0, `No job counter found: ${jobCounterRaw}`);
+
+      const optsRaw = runDockerRedis(`HGET bull:cook_order:${latestId} opts`);
+      assert(optsRaw && optsRaw.length > 2, `No opts field on job ${latestId}`);
+
+      const opts = JSON.parse(optsRaw);
+      assert(opts.attempts === 3, `Expected attempts=3, got ${opts.attempts}`);
+      assert(opts.backoff?.type === 'exponential', `Expected exponential backoff, got ${opts.backoff?.type}`);
+      assert(opts.backoff?.delay === 2000, `Expected delay=2000, got ${opts.backoff?.delay}`);
+
+      pass('BullMQ retry config', `attempts=${opts.attempts}, backoff=${opts.backoff.type}/${opts.backoff.delay}ms`);
+    } catch (error) {
+      fail('BullMQ retry config', error.message);
+    }
+  } else {
+    skip('BullMQ retry config', 'Requires token + Redis + DB');
+  }
+
+  // Improvement #4: BullMQ removeOnComplete/removeOnFail
+  if (token && redisAvailable && dbAvailable) {
+    try {
+      const jobCounterRaw = runDockerRedis('GET bull:cook_order:id');
+      const latestId = parseInt(jobCounterRaw, 10);
+      const optsRaw = runDockerRedis(`HGET bull:cook_order:${latestId} opts`);
+      const opts = JSON.parse(optsRaw);
+
+      assert(opts.removeOnComplete === 100, `Expected removeOnComplete=100, got ${opts.removeOnComplete}`);
+      assert(opts.removeOnFail === 50, `Expected removeOnFail=50, got ${opts.removeOnFail}`);
+      pass('BullMQ cleanup config', `removeOnComplete=${opts.removeOnComplete}, removeOnFail=${opts.removeOnFail}`);
+    } catch (error) {
+      fail('BullMQ cleanup config', error.message);
+    }
+  } else {
+    skip('BullMQ cleanup config', 'Requires token + Redis + DB');
+  }
+
+  // Improvement #3/#5: Socket.io real-time delivery
+  // Connect a client socket, POST /notify, verify the event arrives.
+  try {
+    const testStudentId = 'socket-test-student';
+    const testOrderId = 'socket-test-order-' + Date.now();
+
+    const received = await new Promise(async (resolve, reject) => {
+      const timer = setTimeout(() => {
+        client.disconnect();
+        reject(new Error('Timed out waiting for socket event (5s)'));
+      }, 5000);
+
+      const client = ioClient(config.notificationHubUrl, {
+        autoConnect: true,
+        reconnection: false,
+        transports: ['websocket'],
+      });
+
+      client.on('connect', async () => {
+        client.emit('joinRoom', testStudentId);
+
+        // Small delay to let the server process joinRoom
+        await new Promise((r) => setTimeout(r, 300));
+
+        // POST /notify from the server side
+        await requestJson(`${config.notificationHubUrl}/notify`, {
+          method: 'POST',
+          body: JSON.stringify({
+            studentId: testStudentId,
+            orderId: testOrderId,
+            status: 'Ready',
+          }),
+        });
+      });
+
+      client.on('orderStatusUpdate', (data) => {
+        clearTimeout(timer);
+        client.disconnect();
+        resolve(data);
+      });
+
+      client.on('connect_error', (err) => {
+        clearTimeout(timer);
+        client.disconnect();
+        reject(new Error(`Socket connect error: ${err.message}`));
+      });
+    });
+
+    assert(received.orderId === testOrderId, `Expected orderId ${testOrderId}, got ${received.orderId}`);
+    assert(received.status === 'Ready', `Expected status Ready, got ${received.status}`);
+    pass('Socket.io real-time delivery', `received orderStatusUpdate for ${testOrderId}`);
+  } catch (error) {
+    fail('Socket.io real-time delivery', error.message);
+  }
+
+  // Improvement #1: Order lifecycle — Pending → In Kitchen → Ready via socket
+  if (token && redisAvailable && dbAvailable) {
+    try {
+      // Wait for kitchen queue to drain from previous tests (thundering herd backlog)
+      log('  ⏳ Waiting for kitchen queue to drain...');
+      for (let i = 0; i < 30; i++) {
+        const waitLen = parseInt(runDockerRedis('LLEN bull:cook_order:wait') || '0', 10);
+        const activeLen = parseInt(runDockerRedis('LLEN bull:cook_order:active') || '0', 10);
+        if (waitLen === 0 && activeLen === 0) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+
+      // Reset stock
+      runDockerDbSql(
+        "UPDATE items SET quantity = 50, version = 0 WHERE id = 'iftar-box-01';"
+      );
+      runDockerRedis('SET stock:iftar-box-01 50');
+
+      const studentId = '2100411';
+
+      // Connect socket FIRST
+      const statusUpdates = [];
+      let placedOrderId = '';
+
+      const socketDone = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          client.disconnect();
+          // Resolve even on timeout — we'll check what we got
+          resolve(statusUpdates);
+        }, 12000);
+
+        var client = ioClient(config.notificationHubUrl, {
+          autoConnect: true,
+          reconnection: false,
+          transports: ['websocket'],
+        });
+
+        client.on('connect', () => {
+          client.emit('joinRoom', studentId);
+        });
+
+        client.on('orderStatusUpdate', (data) => {
+          statusUpdates.push(data);
+          // Only resolve when we get Ready for OUR specific order
+          if (data.status === 'Ready' && placedOrderId && data.orderId === placedOrderId) {
+            clearTimeout(timer);
+            client.disconnect();
+            resolve(statusUpdates);
+          }
+        });
+
+        client.on('connect_error', (err) => {
+          clearTimeout(timer);
+          client.disconnect();
+          reject(new Error(`Socket connect error: ${err.message}`));
+        });
+      });
+
+      // Give socket a moment to connect and join room
+      await new Promise((r) => setTimeout(r, 500));
+
+      // Place order
+      const order = await requestJson(`${config.gatewayUrl}/order`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+        body: JSON.stringify({ itemId: 'iftar-box-01', quantity: 1 }),
+      });
+
+      assert(order.status === 201, `Expected 201, got ${order.status}`);
+      assert(order.body?.orderId, 'orderId missing');
+      placedOrderId = order.body.orderId;
+
+      // Wait for kitchen worker to process and socket to receive
+      const updates = await socketDone;
+
+      // We should have received a 'Ready' status for OUR specific order
+      const readyUpdate = updates.find((u) => u.status === 'Ready' && u.orderId === order.body.orderId);
+      assert(readyUpdate, `Expected Ready update for ${order.body.orderId}, got: ${JSON.stringify(updates.map(u => ({orderId: u.orderId, status: u.status})))}`);
+
+      pass('Order lifecycle via socket', `orderId=${order.body.orderId} → Ready`);
+    } catch (error) {
+      fail('Order lifecycle via socket', error.message);
+    }
+  } else {
+    skip('Order lifecycle via socket', 'Requires token + Redis + DB');
   }
 
   finalizeAndExit();

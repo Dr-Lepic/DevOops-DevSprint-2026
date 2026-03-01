@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
-import { connectSocket, disconnectSocket } from '@/lib/socket';
+import { connectSocket } from '@/lib/socket';
 
 export default function OrderPage() {
   const router = useRouter();
@@ -24,6 +24,23 @@ export default function OrderPage() {
     return process.env.NEXT_PUBLIC_HUB_URL || 'http://localhost:3003';
   }, []);
 
+  // Named handler for socket cleanup
+  const handleStatusUpdate = useCallback((data) => {
+    console.log('📢 Order status update received:', data);
+    setOrderStatus(data.status);
+    setMessage(`Order ${data.orderId} is ${data.status}!`);
+
+    // Persist update to localStorage (update existing order)
+    try {
+      const stored = JSON.parse(window.localStorage.getItem('cafeteria_orders') || '[]');
+      const idx = stored.findIndex((o) => o.orderId === data.orderId);
+      if (idx >= 0) {
+        stored[idx] = { ...stored[idx], ...data };
+        window.localStorage.setItem('cafeteria_orders', JSON.stringify(stored));
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
@@ -38,18 +55,14 @@ export default function OrderPage() {
     if (storedStudentId) {
       const socket = connectSocket(hubUrl, storedStudentId);
 
-      // Listen for order status updates
-      socket.on('orderStatusUpdate', (data) => {
-        console.log('📢 Order status update received:', data);
-        setOrderStatus(data.status);
-        setMessage(`Order ${data.orderId} is ${data.status}!`);
-      });
+      // Listen for order status updates (named handler)
+      socket.on('orderStatusUpdate', handleStatusUpdate);
 
       return () => {
-        disconnectSocket();
+        socket.off('orderStatusUpdate', handleStatusUpdate);
       };
     }
-  }, [hubUrl]);
+  }, [hubUrl, handleStatusUpdate]);
 
   const submitOrder = async (event) => {
     event.preventDefault();
@@ -62,7 +75,7 @@ export default function OrderPage() {
     setStatus('loading');
     setMessage('');
     setOrderId('');
-    setOrderStatus('');
+    setOrderStatus('Pending');
 
     try {
       const response = await axios.post(
@@ -80,8 +93,24 @@ export default function OrderPage() {
 
       setStatus('success');
       setMessage(response.data?.message || 'Order placed successfully');
-      setOrderId(response.data?.orderId || '');
+      const newOrderId = response.data?.orderId || '';
+      setOrderId(newOrderId);
       setOrderStatus('In Kitchen');
+
+      // Persist new order to localStorage
+      if (newOrderId) {
+        try {
+          const stored = JSON.parse(window.localStorage.getItem('cafeteria_orders') || '[]');
+          stored.unshift({
+            orderId: newOrderId,
+            itemId,
+            quantity: Number(quantity),
+            status: 'In Kitchen',
+            timestamp: new Date().toISOString(),
+          });
+          window.localStorage.setItem('cafeteria_orders', JSON.stringify(stored));
+        } catch { /* ignore */ }
+      }
     } catch (error) {
       const statusCode = error?.response?.status;
 
@@ -96,6 +125,7 @@ export default function OrderPage() {
       }
 
       setStatus('error');
+      setOrderStatus('');
     }
   };
 
@@ -168,7 +198,18 @@ export default function OrderPage() {
             <p className="text-xs break-all">Order ID: {orderId}</p>
             {orderStatus && (
               <p className="text-sm font-semibold">
-                Status: <span className={orderStatus === 'Ready' ? 'text-green-600' : 'text-blue-600'}>{orderStatus}</span>
+                Status:{' '}
+                <span
+                  className={
+                    orderStatus === 'Ready'
+                      ? 'text-green-600'
+                      : orderStatus === 'Pending'
+                      ? 'text-amber-500'
+                      : 'text-blue-600'
+                  }
+                >
+                  {orderStatus}
+                </span>
               </p>
             )}
           </div>

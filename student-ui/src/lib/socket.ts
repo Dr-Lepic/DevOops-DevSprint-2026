@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 
 let socket: Socket | null = null;
+let handlersRegistered = false;
 
 export const getSocket = (hubUrl: string): Socket => {
   if (!socket) {
@@ -15,34 +16,40 @@ export const getSocket = (hubUrl: string): Socket => {
 };
 
 export const connectSocket = (hubUrl: string, studentId: string) => {
-  const socket = getSocket(hubUrl);
-  
-  if (!socket.connected) {
-    socket.connect();
-    
-    socket.on('connect', () => {
+  const s = getSocket(hubUrl);
+
+  if (!s.connected) {
+    s.connect();
+  }
+
+  if (!handlersRegistered) {
+    handlersRegistered = true;
+
+    s.on('connect', () => {
       console.log('✓ Connected to Notification Hub');
-      socket.emit('joinRoom', studentId);
+      s.emit('joinRoom', studentId);
     });
 
-    socket.on('disconnect', () => {
+    s.on('disconnect', () => {
       console.log('✗ Disconnected from Notification Hub');
     });
 
-    socket.on('connect_error', (error) => {
+    s.on('connect_error', (error) => {
       console.error('Socket connection error:', error);
     });
-  } else {
+  } else if (s.connected) {
     // Already connected, just join the room
-    socket.emit('joinRoom', studentId);
+    s.emit('joinRoom', studentId);
   }
 
-  return socket;
+  return s;
 };
 
 export const disconnectSocket = () => {
-  if (socket && socket.connected) {
+  if (socket) {
+    socket.removeAllListeners();
     socket.disconnect();
     socket = null;
+    handlersRegistered = false;
   }
 };
