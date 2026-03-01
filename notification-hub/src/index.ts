@@ -1,0 +1,109 @@
+import express from 'express';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
+import { config } from './config/env';
+
+const app = express();
+const httpServer = createServer(app);
+
+// Initialize Socket.io with CORS
+const io = new Server(httpServer, {
+  cors: {
+    origin: config.corsOrigin,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+});
+
+// Middleware
+app.use(cors({
+  origin: config.corsOrigin,
+  credentials: true,
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Socket.io connection handling
+io.on('connection', (socket) => {
+  console.log(`🔌 Client connected: ${socket.id}`);
+
+  // Handle joinRoom event - client joins their studentId room
+  socket.on('joinRoom', (studentId: string) => {
+    if (!studentId) {
+      console.error('❌ joinRoom called without studentId');
+      return;
+    }
+    socket.join(studentId);
+    console.log(`✓ Student ${studentId} joined their room`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`🔌 Client disconnected: ${socket.id}`);
+  });
+});
+
+// REST API endpoint for Kitchen Worker to notify
+app.post('/notify', (req, res) => {
+  try {
+    const { studentId, orderId, status } = req.body;
+
+    if (!studentId || !orderId || !status) {
+      res.status(400).json({ error: 'studentId, orderId, and status are required' });
+      return;
+    }
+
+    console.log(`📢 Broadcasting to student ${studentId}: Order ${orderId} is ${status}`);
+
+    // Emit to the specific student's room
+    io.to(studentId).emit('orderStatusUpdate', {
+      orderId,
+      status,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.status(200).json({ message: 'Notification broadcasted' });
+  } catch (error) {
+    console.error('Notify error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'healthy', 
+    service: 'notification-hub',
+    connections: io.engine.clientsCount,
+  });
+});
+
+// Error handling middleware
+app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// Start server
+httpServer.listen(config.port, () => {
+  console.log('🚀 Notification Hub running on port', config.port);
+  console.log('📝 Environment:', config.nodeEnv);
+  console.log('🔗 CORS Origin:', config.corsOrigin);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  httpServer.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  httpServer.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});

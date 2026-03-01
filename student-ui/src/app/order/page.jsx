@@ -1,20 +1,44 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
+import { connectSocket } from '@/lib/socket';
 
 export default function OrderPage() {
   const router = useRouter();
   const [token, setToken] = useState('');
+  const [studentId, setStudentId] = useState('');
   const [itemId, setItemId] = useState('iftar-box-01');
   const [quantity, setQuantity] = useState(1);
   const [status, setStatus] = useState('idle');
   const [message, setMessage] = useState('');
   const [orderId, setOrderId] = useState('');
+  const [orderStatus, setOrderStatus] = useState('');
 
   const gatewayUrl = useMemo(() => {
     return process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:3000';
+  }, []);
+
+  const hubUrl = useMemo(() => {
+    return process.env.NEXT_PUBLIC_HUB_URL || 'http://localhost:3003';
+  }, []);
+
+  // Named handler for socket cleanup
+  const handleStatusUpdate = useCallback((data) => {
+    console.log('📢 Order status update received:', data);
+    setOrderStatus(data.status);
+    setMessage(`Order ${data.orderId} is ${data.status}!`);
+
+    // Persist update to localStorage (update existing order)
+    try {
+      const stored = JSON.parse(window.localStorage.getItem('cafeteria_orders') || '[]');
+      const idx = stored.findIndex((o) => o.orderId === data.orderId);
+      if (idx >= 0) {
+        stored[idx] = { ...stored[idx], ...data };
+        window.localStorage.setItem('cafeteria_orders', JSON.stringify(stored));
+      }
+    } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
@@ -23,8 +47,22 @@ export default function OrderPage() {
     }
 
     const storedToken = window.localStorage.getItem('cafeteria_token') || '';
+    const storedStudentId = window.localStorage.getItem('cafeteria_student_id') || '';
     setToken(storedToken);
-  }, []);
+    setStudentId(storedStudentId);
+
+    // Connect to Socket.io if we have a studentId
+    if (storedStudentId) {
+      const socket = connectSocket(hubUrl, storedStudentId);
+
+      // Listen for order status updates (named handler)
+      socket.on('orderStatusUpdate', handleStatusUpdate);
+
+      return () => {
+        socket.off('orderStatusUpdate', handleStatusUpdate);
+      };
+    }
+  }, [hubUrl, handleStatusUpdate]);
 
   const submitOrder = async (event) => {
     event.preventDefault();
@@ -37,6 +75,7 @@ export default function OrderPage() {
     setStatus('loading');
     setMessage('');
     setOrderId('');
+    setOrderStatus('Pending');
 
     try {
       const response = await axios.post(
@@ -54,7 +93,24 @@ export default function OrderPage() {
 
       setStatus('success');
       setMessage(response.data?.message || 'Order placed successfully');
-      setOrderId(response.data?.orderId || '');
+      const newOrderId = response.data?.orderId || '';
+      setOrderId(newOrderId);
+      setOrderStatus('In Kitchen');
+
+      // Persist new order to localStorage
+      if (newOrderId) {
+        try {
+          const stored = JSON.parse(window.localStorage.getItem('cafeteria_orders') || '[]');
+          stored.unshift({
+            orderId: newOrderId,
+            itemId,
+            quantity: Number(quantity),
+            status: 'In Kitchen',
+            timestamp: new Date().toISOString(),
+          });
+          window.localStorage.setItem('cafeteria_orders', JSON.stringify(stored));
+        } catch { /* ignore */ }
+      }
     } catch (error) {
       const statusCode = error?.response?.status;
 
@@ -69,13 +125,25 @@ export default function OrderPage() {
       }
 
       setStatus('error');
+      setOrderStatus('');
     }
   };
 
   return (
     <main className="min-h-screen flex items-center justify-center p-6">
       <section className="w-full max-w-md rounded border border-gray-300 p-6">
-        <h1 className="text-xl font-semibold mb-4">Place Order</h1>
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-xl font-semibold">Place Order</h1>
+          {token && (
+            <button
+              type="button"
+              className="text-sm text-blue-600 hover:underline"
+              onClick={() => router.push('/status')}
+            >
+              View Status
+            </button>
+          )}
+        </div>
 
         {!token && (
           <div className="mb-4 text-sm">
@@ -125,7 +193,27 @@ export default function OrderPage() {
         </form>
 
         {message && <p className="mt-4 text-sm">{message}</p>}
-        {orderId && <p className="mt-2 text-xs break-all">Order ID: {orderId}</p>}
+        {orderId && (
+          <div className="mt-2 space-y-1">
+            <p className="text-xs break-all">Order ID: {orderId}</p>
+            {orderStatus && (
+              <p className="text-sm font-semibold">
+                Status:{' '}
+                <span
+                  className={
+                    orderStatus === 'Ready'
+                      ? 'text-green-600'
+                      : orderStatus === 'Pending'
+                      ? 'text-amber-500'
+                      : 'text-blue-600'
+                  }
+                >
+                  {orderStatus}
+                </span>
+              </p>
+            )}
+          </div>
+        )}
       </section>
     </main>
   );
