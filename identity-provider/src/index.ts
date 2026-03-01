@@ -2,11 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import { config } from './config/env';
 import routes from './routes';
-<<<<<<< HEAD
 import { redisClient } from './middlewares/rateLimiter';
-=======
 import { metricsMiddleware } from './middlewares/metricsMiddleware';
->>>>>>> 8d85275998680e1dfc59dd67db7294b3a25d50f9
 
 const app = express();
 

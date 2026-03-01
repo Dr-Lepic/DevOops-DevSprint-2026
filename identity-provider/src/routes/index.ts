@@ -1,13 +1,6 @@
 import express from 'express';
 import { login } from '../controllers/authController';
 import { loginRateLimiter } from '../middlewares/rateLimiter';
-<<<<<<< HEAD
-
-const router = express.Router();
-
-// Routes
-router.post('/login', loginRateLimiter, login);
-=======
 import { metricsHandler } from '../metrics';
 import { createClient } from 'redis';
 import { config } from '../config/env';
@@ -18,7 +11,6 @@ const router = express.Router();
 const healthRedis = createClient({ url: config.redisUrl });
 healthRedis.connect().catch(() => {});
 healthRedis.on('error', () => {});
->>>>>>> 8d85275998680e1dfc59dd67db7294b3a25d50f9
 
 // Routes
 router.post('/login', loginRateLimiter, login);
