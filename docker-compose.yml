@@ -27,6 +27,8 @@ services:
       NEXT_PUBLIC_GATEWAY_URL: http://localhost:3000
       NEXT_PUBLIC_IDENTITY_URL: http://localhost:3001
       NEXT_PUBLIC_HUB_URL: http://localhost:3003
+      NEXT_PUBLIC_KITCHEN_QUEUE_URL: http://localhost:3005
+      NEXT_PUBLIC_STOCK_SERVICE_URL: http://localhost:3002
       PORT: 3004
     depends_on:
       - identity-provider

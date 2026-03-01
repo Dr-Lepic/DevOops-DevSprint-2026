@@ -64,10 +64,11 @@ This section records actual implementation progress so team members can quickly 
   - Real-time status updates visible on `/status` page
 
 ### ⏳ Pending (Expected for Day 4+)
-- Admin dashboard for monitoring all orders (`/admin`)
+- ~~Admin dashboard for monitoring all orders (`/admin`)~~ ✅ Completed (Day 4)
 - ~~Prometheus `/metrics` endpoints~~ ✅ Completed (Day 4)
 - ~~Health check endpoints with detailed service status~~ ✅ Completed (Day 4)
 - ~~Idempotency logic refinement in Kitchen Worker~~ ✅ Completed (Day 4)
+- ~~Visual Alert bonus (Warning on UI if Gateway latency >1s)~~ ✅ Completed (Day 4)
 - Chaos engineering toggle
 - CI/CD pipeline with GitHub Actions
 - Unit tests for critical services
@@ -95,6 +96,18 @@ This section records actual implementation progress so team members can quickly 
   - On retry: skips cooking if already `cooked`, skips entirely if `completed`
   - Prevents duplicate cooking simulations and duplicate notifications
 - Queue producer now sets `jobId = orderId` for BullMQ deduplication at enqueue time
+- Admin Dashboard (`/admin` page) with live health grid:
+  - Polls all 5 backend `/health` endpoints every 5 seconds
+  - Responsive grid (1/2/3 columns) with status badges (Healthy/Degraded/Down)
+  - Dependency status indicators with colored dots
+  - Kitchen-queue card shows queue stats (waiting/active/completed/failed)
+  - Notification-hub card shows active socket connections
+  - Uptime display per service, overall status bar, manual refresh button
+- Visual Alert on Order Page:
+  - Measures gateway response latency with `Date.now()` around the `POST /order` call
+  - Amber warning banner when response exceeds 1 second: "Gateway responded in Xms (>1s)"
+  - Normal response time shown in subtle gray text when under 1s
+- Navigation: Admin link added to order page header
 
 ## 1. System Architecture & Tech Stack
 

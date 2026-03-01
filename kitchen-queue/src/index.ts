@@ -1,6 +1,7 @@
 import { Worker, Job, Queue } from 'bullmq';
 import axios from 'axios';
 import express from 'express';
+import cors from 'cors';
 import { config } from './config/env';
 import { metricsHandler, jobsProcessedTotal, jobProcessingDuration, jobsActive, jobsWaiting } from './metrics';
 import {
@@ -107,6 +108,7 @@ worker.on('error', (err) => {
 // ─── Express HTTP Server for /health and /metrics ───
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 app.get('/metrics', metricsHandler);

@@ -6,7 +6,9 @@ const config = {
   identityUrl: process.env.IDENTITY_URL ?? 'http://localhost:3001',
   gatewayUrl: process.env.GATEWAY_URL ?? 'http://localhost:3000',
   stockUrl: process.env.STOCK_URL ?? 'http://localhost:3002',
+  kitchenQueueUrl: process.env.KITCHEN_QUEUE_URL ?? 'http://localhost:3005',
   notificationHubUrl: process.env.NOTIFICATION_HUB_URL ?? 'http://localhost:3003',
+  uiUrl: process.env.UI_URL ?? 'http://localhost:3004',
   timeoutMs: Number(process.env.TEST_TIMEOUT_MS ?? '5000'),
 };
 
@@ -66,6 +68,26 @@ async function requestJson(url, options = {}) {
   }
 }
 
+async function requestText(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers ?? {}),
+      },
+      signal: controller.signal,
+    });
+
+    const body = await response.text();
+    return { status: response.status, body };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function runDockerRedis(command) {
   const full = `docker exec redis redis-cli ${command}`;
   return execSync(full, { encoding: 'utf-8' }).trim();
@@ -80,7 +102,7 @@ function runDockerDbSql(sql, raw = false) {
 
 async function main() {
   log('═══════════════════════════════════════');
-  log('  DevSprint System Tests (Day 1-3)');
+  log('  DevSprint System Tests (Day 1-4)');
   log('═══════════════════════════════════════');
 
   let token = '';
@@ -115,12 +137,16 @@ async function main() {
       ['Identity health', `${config.identityUrl}/health`],
       ['Gateway health', `${config.gatewayUrl}/health`],
       ['Stock health', `${config.stockUrl}/health`],
+      ['Kitchen Queue health', `${config.kitchenQueueUrl}/health`],
       ['Notification Hub health', `${config.notificationHubUrl}/health`],
     ];
 
     for (const [name, url] of healthTargets) {
       const response = await requestJson(url, { method: 'GET' });
       assert(response.status === 200, `${name} expected 200, got ${response.status}`);
+      assert(typeof response.body?.status === 'string', `${name} missing status field`);
+      assert(typeof response.body?.service === 'string', `${name} missing service field`);
+      assert(typeof response.body?.uptime === 'number', `${name} missing uptime field`);
       pass(name);
     }
   } catch (error) {
@@ -391,6 +417,8 @@ async function main() {
   // ─── Improvement Tests ──────────────────────────────────────────────
   log('\n─── Improvement Tests ───');
 
+  let lastEnqueuedOrderId = '';
+
   // Improvement #4: BullMQ retry config — verify job options
   if (token && redisAvailable && dbAvailable) {
     try {
@@ -407,20 +435,15 @@ async function main() {
         body: JSON.stringify({ itemId: 'iftar-box-01', quantity: 1 }),
       });
       assert(order.status === 201, `Expected 201, got ${order.status}`);
+      assert(order.body?.orderId, 'orderId missing for BullMQ retry config test');
+      lastEnqueuedOrderId = order.body.orderId;
 
       // Give BullMQ a moment to persist the job
       await new Promise((r) => setTimeout(r, 500));
 
-      // Inspect the latest job in the queue. BullMQ stores job data as
-      // a hash at bull:<queue>:<id>. The 'opts' field is a JSON string
-      // containing attempts/backoff.  We look at the latest job ID from
-      // the queue counter.
-      const jobCounterRaw = runDockerRedis('GET bull:cook_order:id');
-      const latestId = parseInt(jobCounterRaw, 10);
-      assert(!isNaN(latestId) && latestId > 0, `No job counter found: ${jobCounterRaw}`);
-
-      const optsRaw = runDockerRedis(`HGET bull:cook_order:${latestId} opts`);
-      assert(optsRaw && optsRaw.length > 2, `No opts field on job ${latestId}`);
+      // Day 4 uses jobId = orderId, so inspect the exact job hash.
+      const optsRaw = runDockerRedis(`HGET bull:cook_order:${lastEnqueuedOrderId} opts`);
+      assert(optsRaw && optsRaw.length > 2, `No opts field on job ${lastEnqueuedOrderId}`);
 
       const opts = JSON.parse(optsRaw);
       assert(opts.attempts === 3, `Expected attempts=3, got ${opts.attempts}`);
@@ -438,9 +461,21 @@ async function main() {
   // Improvement #4: BullMQ removeOnComplete/removeOnFail
   if (token && redisAvailable && dbAvailable) {
     try {
-      const jobCounterRaw = runDockerRedis('GET bull:cook_order:id');
-      const latestId = parseInt(jobCounterRaw, 10);
-      const optsRaw = runDockerRedis(`HGET bull:cook_order:${latestId} opts`);
+      if (!lastEnqueuedOrderId) {
+        // Fallback: enqueue one order if previous test didn't produce an id.
+        const order = await requestJson(`${config.gatewayUrl}/order`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}` },
+          body: JSON.stringify({ itemId: 'iftar-box-01', quantity: 1 }),
+        });
+        assert(order.status === 201, `Expected 201, got ${order.status}`);
+        assert(order.body?.orderId, 'orderId missing for BullMQ cleanup config test');
+        lastEnqueuedOrderId = order.body.orderId;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+
+      const optsRaw = runDockerRedis(`HGET bull:cook_order:${lastEnqueuedOrderId} opts`);
+      assert(optsRaw && optsRaw.length > 2, `No opts field on job ${lastEnqueuedOrderId}`);
       const opts = JSON.parse(optsRaw);
 
       assert(opts.removeOnComplete === 100, `Expected removeOnComplete=100, got ${opts.removeOnComplete}`);
@@ -593,6 +628,95 @@ async function main() {
     }
   } else {
     skip('Order lifecycle via socket', 'Requires token + Redis + DB');
+  }
+
+  // ─── Day 4 Tests ───────────────────────────────────────────────────
+  log('\n─── Day 4 Tests ───');
+
+  // Day 4: /metrics endpoints exposed for all backend services
+  try {
+    const metricTargets = [
+      ['Identity metrics', `${config.identityUrl}/metrics`],
+      ['Gateway metrics', `${config.gatewayUrl}/metrics`],
+      ['Stock metrics', `${config.stockUrl}/metrics`],
+      ['Kitchen Queue metrics', `${config.kitchenQueueUrl}/metrics`],
+      ['Notification Hub metrics', `${config.notificationHubUrl}/metrics`],
+    ];
+
+    for (const [name, url] of metricTargets) {
+      const response = await requestText(url, { method: 'GET' });
+      assert(response.status === 200, `${name} expected 200, got ${response.status}`);
+      assert(
+        response.body.includes('# HELP') || response.body.includes('process_cpu_user_seconds_total'),
+        `${name} did not return Prometheus metrics format`
+      );
+      pass(name);
+    }
+  } catch (error) {
+    fail('Day 4 metrics endpoints', error.message);
+  }
+
+  // Day 4: Kitchen health returns queue stats object
+  try {
+    const health = await requestJson(`${config.kitchenQueueUrl}/health`, { method: 'GET' });
+    assert(health.status === 200, `Expected 200, got ${health.status}`);
+    assert(typeof health.body?.queue === 'object', 'Kitchen health missing queue object');
+    assert(typeof health.body?.queue?.waiting === 'number', 'Kitchen queue.waiting missing/invalid');
+    assert(typeof health.body?.queue?.active === 'number', 'Kitchen queue.active missing/invalid');
+    assert(typeof health.body?.queue?.completed === 'number', 'Kitchen queue.completed missing/invalid');
+    assert(typeof health.body?.queue?.failed === 'number', 'Kitchen queue.failed missing/invalid');
+    pass('Day 4 kitchen health includes queue stats');
+  } catch (error) {
+    fail('Day 4 kitchen health includes queue stats', error.message);
+  }
+
+  // Day 4: Admin dashboard page reachable
+  try {
+    const adminPage = await requestText(`${config.uiUrl}/admin`, { method: 'GET' });
+    assert(adminPage.status === 200, `Expected 200, got ${adminPage.status}`);
+    assert(adminPage.body.includes('Admin Dashboard'), 'Admin page did not include expected heading');
+    pass('Day 4 admin dashboard page reachable');
+  } catch (error) {
+    fail('Day 4 admin dashboard page reachable', error.message);
+  }
+
+  // Day 4: Kitchen idempotency state reaches "completed" for successful order
+  if (token && redisAvailable && dbAvailable) {
+    try {
+      // Reset stock precondition
+      runDockerDbSql(
+        "UPDATE items SET quantity = 50, version = 0 WHERE id = 'iftar-box-01';"
+      );
+      runDockerRedis('SET stock:iftar-box-01 50');
+
+      const order = await requestJson(`${config.gatewayUrl}/order`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+        body: JSON.stringify({ itemId: 'iftar-box-01', quantity: 1 }),
+      });
+
+      assert(order.status === 201, `Expected 201, got ${order.status}`);
+      assert(order.body?.orderId, 'orderId missing in Day 4 idempotency test');
+
+      // Wait up to 12s for processing + retry slack
+      let state = '';
+      for (let i = 0; i < 12; i += 1) {
+        state = runDockerRedis(`GET order:state:${order.body.orderId}`);
+        if (state === 'completed') break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+
+      assert(
+        state === 'completed',
+        `Expected idempotency state completed, got ${state || '<null>'}`
+      );
+
+      pass('Day 4 idempotency key completion', `orderId=${order.body.orderId}`);
+    } catch (error) {
+      fail('Day 4 idempotency key completion', error.message);
+    }
+  } else {
+    skip('Day 4 idempotency key completion', 'Requires token + Redis + DB');
   }
 
   finalizeAndExit();
