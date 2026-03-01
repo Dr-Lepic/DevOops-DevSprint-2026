@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { config } from './config/env';
+import { httpRequestsTotal, httpRequestDuration, notificationsSentTotal, socketConnectionsActive, metricsHandler } from './metrics';
 
 const app = express();
 const httpServer = createServer(app);
@@ -24,6 +25,19 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Metrics middleware
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    const durationNs = Number(process.hrtime.bigint() - start);
+    const durationSec = durationNs / 1e9;
+    const route = req.route?.path || req.path || 'unknown';
+    httpRequestsTotal.inc({ method: req.method, route, status_code: res.statusCode.toString() });
+    httpRequestDuration.observe({ method: req.method, route, status_code: res.statusCode.toString() }, durationSec);
+  });
+  next();
+});
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   console.log(`🔌 Client connected: ${socket.id}`);
@@ -36,10 +50,12 @@ io.on('connection', (socket) => {
     }
     socket.join(studentId);
     console.log(`✓ Student ${studentId} joined their room`);
+    socketConnectionsActive.set(io.engine.clientsCount);
   });
 
   socket.on('disconnect', () => {
     console.log(`🔌 Client disconnected: ${socket.id}`);
+    socketConnectionsActive.set(io.engine.clientsCount);
   });
 });
 
@@ -62,6 +78,8 @@ app.post('/notify', (req, res) => {
       timestamp: new Date().toISOString(),
     });
 
+    notificationsSentTotal.inc();
+
     res.status(200).json({ message: 'Notification broadcasted' });
   } catch (error) {
     console.error('Notify error:', error);
@@ -69,11 +87,15 @@ app.post('/notify', (req, res) => {
   }
 });
 
-// Health check endpoint
+// Prometheus metrics endpoint
+app.get('/metrics', metricsHandler);
+
+// Enhanced health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'healthy', 
     service: 'notification-hub',
+    uptime: process.uptime(),
     connections: io.engine.clientsCount,
   });
 });

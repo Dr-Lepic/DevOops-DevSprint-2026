@@ -65,12 +65,36 @@ This section records actual implementation progress so team members can quickly 
 
 ### ⏳ Pending (Expected for Day 4+)
 - Admin dashboard for monitoring all orders (`/admin`)
-- Prometheus `/metrics` endpoints
-- Health check endpoints with detailed service status
-- Idempotency logic refinement in Kitchen Worker
+- ~~Prometheus `/metrics` endpoints~~ ✅ Completed (Day 4)
+- ~~Health check endpoints with detailed service status~~ ✅ Completed (Day 4)
+- ~~Idempotency logic refinement in Kitchen Worker~~ ✅ Completed (Day 4)
 - Chaos engineering toggle
 - CI/CD pipeline with GitHub Actions
 - Unit tests for critical services
+
+### ✅ Completed (Day 4 Scope)
+- Prometheus `/metrics` endpoints added to all 5 backend services using `prom-client`:
+  - Default Node.js metrics (CPU, memory, event loop, GC) on every service
+  - `identity-provider`: `http_requests_total`, `http_request_duration_seconds`, `login_attempts_total`, `rate_limit_hits_total`
+  - `order-gateway`: `http_requests_total`, `http_request_duration_seconds`, `orders_placed_total`, `stock_cache_checks_total`, `stock_deduction_retries_total`
+  - `stock-service`: `http_requests_total`, `http_request_duration_seconds`, `stock_deductions_total`, `db_query_duration_seconds`, `current_stock_quantity`
+  - `kitchen-queue`: `jobs_processed_total`, `job_processing_duration_seconds`, `jobs_active`, `jobs_waiting`
+  - `notification-hub`: `http_requests_total`, `http_request_duration_seconds`, `notifications_sent_total`, `socket_connections_active`
+- Enhanced `/health` endpoints with dependency checks:
+  - `identity-provider`: checks Redis connectivity
+  - `order-gateway`: checks Redis + stock-service `/health`
+  - `stock-service`: checks Postgres (`SELECT 1`) + Redis
+  - `kitchen-queue`: checks Redis + BullMQ queue stats (waiting/active/completed/failed)
+  - `notification-hub`: reports uptime + active socket connections
+  - All return `status: 'healthy'` or `status: 'degraded'` based on dependency state
+- Kitchen-queue now exposes Express HTTP server on port 3005 (for `/health` + `/metrics`)
+- Kitchen Worker idempotency with two-phase state machine:
+  - Redis-based state tracking (`order:state:{orderId}`) with TTL
+  - Phase 1 (Cook): `null` → `cooking` → `cooked`
+  - Phase 2 (Notify): `cooked` → `completed`
+  - On retry: skips cooking if already `cooked`, skips entirely if `completed`
+  - Prevents duplicate cooking simulations and duplicate notifications
+- Queue producer now sets `jobId = orderId` for BullMQ deduplication at enqueue time
 
 ## 1. System Architecture & Tech Stack
 

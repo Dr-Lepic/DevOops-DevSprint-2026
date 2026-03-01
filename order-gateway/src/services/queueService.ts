@@ -30,6 +30,8 @@ export const enqueueOrder = async (payload: {
   await queue.add('cook_order', {
     ...payload,
     orderId,
+  }, {
+    jobId: orderId,
   });
 
   return orderId;

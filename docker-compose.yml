@@ -77,11 +77,14 @@ services:
       context: ./kitchen-queue
       dockerfile: Dockerfile
     container_name: kitchen-queue
+    ports:
+      - "3005:3005"
     environment:
       REDIS_URL: redis://redis:6379
       NOTIFICATION_HUB_URL: http://notification-hub:3003
       QUEUE_NAME: cook_order
       NODE_ENV: production
+      PORT: 3005
     depends_on:
       - redis
       - notification-hub
