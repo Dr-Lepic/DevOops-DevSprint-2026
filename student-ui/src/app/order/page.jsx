@@ -15,6 +15,7 @@ export default function OrderPage() {
   const [message, setMessage] = useState('');
   const [orderId, setOrderId] = useState('');
   const [orderStatus, setOrderStatus] = useState('');
+  const [latency, setLatency] = useState(null);
 
   const gatewayUrl = useMemo(() => {
     return process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:3000';
@@ -76,6 +77,9 @@ export default function OrderPage() {
     setMessage('');
     setOrderId('');
     setOrderStatus('Pending');
+    setLatency(null);
+
+    const startTime = Date.now();
 
     try {
       const response = await axios.post(
@@ -90,6 +94,9 @@ export default function OrderPage() {
           },
         }
       );
+
+      const elapsed = Date.now() - startTime;
+      setLatency(elapsed);
 
       setStatus('success');
       setMessage(response.data?.message || 'Order placed successfully');
@@ -124,6 +131,9 @@ export default function OrderPage() {
         setMessage('Order failed. Please try again.');
       }
 
+      const elapsed = Date.now() - startTime;
+      setLatency(elapsed);
+
       setStatus('error');
       setOrderStatus('');
     }
@@ -134,15 +144,24 @@ export default function OrderPage() {
       <section className="w-full max-w-md rounded border border-gray-300 p-6">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl font-semibold">Place Order</h1>
-          {token && (
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              className="text-sm text-blue-600 hover:underline"
-              onClick={() => router.push('/status')}
+              className="text-sm text-gray-500 hover:underline"
+              onClick={() => router.push('/admin')}
             >
-              View Status
+              Admin
             </button>
-          )}
+            {token && (
+              <button
+                type="button"
+                className="text-sm text-blue-600 hover:underline"
+                onClick={() => router.push('/status')}
+              >
+                View Status
+              </button>
+            )}
+          </div>
         </div>
 
         {!token && (
@@ -191,6 +210,17 @@ export default function OrderPage() {
             {status === 'loading' ? 'Placing order...' : 'Place Order'}
           </button>
         </form>
+
+        {latency !== null && latency > 1000 && (
+          <div className="mt-4 flex items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <span>&#9888;</span>
+            <span>Gateway responded in {latency}ms (&gt;1s) &mdash; possible congestion</span>
+          </div>
+        )}
+
+        {latency !== null && latency <= 1000 && (
+          <p className="mt-4 text-xs text-gray-400">Response time: {latency}ms</p>
+        )}
 
         {message && <p className="mt-4 text-sm">{message}</p>}
         {orderId && (

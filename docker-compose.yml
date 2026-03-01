@@ -27,6 +27,8 @@ services:
       NEXT_PUBLIC_GATEWAY_URL: http://localhost:3000
       NEXT_PUBLIC_IDENTITY_URL: http://localhost:3001
       NEXT_PUBLIC_HUB_URL: http://localhost:3003
+      NEXT_PUBLIC_KITCHEN_QUEUE_URL: http://localhost:3005
+      NEXT_PUBLIC_STOCK_SERVICE_URL: http://localhost:3002
       PORT: 3004
     depends_on:
       - identity-provider
@@ -77,11 +79,14 @@ services:
       context: ./kitchen-queue
       dockerfile: Dockerfile
     container_name: kitchen-queue
+    ports:
+      - "3005:3005"
     environment:
       REDIS_URL: redis://redis:6379
       NOTIFICATION_HUB_URL: http://notification-hub:3003
       QUEUE_NAME: cook_order
       NODE_ENV: production
+      PORT: 3005
     depends_on:
       - redis
       - notification-hub

@@ -7,4 +7,5 @@ export const config = {
   notificationHubUrl: process.env.NOTIFICATION_HUB_URL || 'http://localhost:3003',
   queueName: process.env.QUEUE_NAME || 'cook_order',
   nodeEnv: process.env.NODE_ENV || 'development',
+  port: parseInt(process.env.PORT || '3005', 10),
 };

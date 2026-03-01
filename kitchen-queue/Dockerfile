@@ -19,4 +19,5 @@ RUN addgroup -S app && adduser -S app -G app
 RUN chown -R app:app /app
 USER app
 
+EXPOSE 3005
 CMD ["node", "dist/index.js"]
