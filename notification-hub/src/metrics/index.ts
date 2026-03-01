@@ -23,6 +23,7 @@ export const httpRequestDuration = new Histogram({
 export const notificationsSentTotal = new Counter({
   name: 'notifications_sent_total',
   help: 'Total notifications broadcast via Socket.io',
+  labelNames: ['status'] as const,
   registers: [register],
 });
 
