@@ -1,4 +1,15 @@
 import { Request, Response } from 'express';
+
+jest.mock('../config/env', () => ({
+  config: {
+    databaseUrl: 'postgres://mock',
+    redisUrl: 'redis://mock',
+    port: 3002,
+    nodeEnv: 'test',
+    chaosEnabled: false,
+  },
+}));
+
 import { deductStock } from '../controllers/stockController';
 import { pool } from '../db/pool';
 import { redisClient } from '../cache/redis';
