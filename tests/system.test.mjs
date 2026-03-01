@@ -5,6 +5,7 @@ const config = {
   identityUrl: process.env.IDENTITY_URL ?? 'http://localhost:3001',
   gatewayUrl: process.env.GATEWAY_URL ?? 'http://localhost:3000',
   stockUrl: process.env.STOCK_URL ?? 'http://localhost:3002',
+  notificationHubUrl: process.env.NOTIFICATION_HUB_URL ?? 'http://localhost:3003',
   timeoutMs: Number(process.env.TEST_TIMEOUT_MS ?? '5000'),
 };
 
@@ -69,17 +70,21 @@ function runDockerRedis(command) {
   return execSync(full, { encoding: 'utf-8' }).trim();
 }
 
-function runDockerDbSql(sql) {
+function runDockerDbSql(sql, raw = false) {
   const escaped = sql.replace(/"/g, '\\"');
-  const full = `docker exec db psql -U user -d cafeteria -c "${escaped}"`;
+  const flags = raw ? '-t -A' : '';
+  const full = `docker exec db psql -U user -d cafeteria ${flags} -c "${escaped}"`;
   return execSync(full, { encoding: 'utf-8' }).trim();
 }
 
 async function main() {
-  log('DevSprint Day 1 + Day 2 system tests');
+  log('═══════════════════════════════════════');
+  log('  DevSprint System Tests (Day 1-3)');
+  log('═══════════════════════════════════════');
 
   let token = '';
   let redisAvailable = true;
+  let dbAvailable = true;
 
   try {
     runDockerRedis('PING');
@@ -97,6 +102,7 @@ async function main() {
     );
     pass('Test stock reset precondition');
   } catch (error) {
+    dbAvailable = false;
     skip(
       'Test stock reset precondition',
       'db container not available for reset; tests may depend on existing stock state'
@@ -108,6 +114,7 @@ async function main() {
       ['Identity health', `${config.identityUrl}/health`],
       ['Gateway health', `${config.gatewayUrl}/health`],
       ['Stock health', `${config.stockUrl}/health`],
+      ['Notification Hub health', `${config.notificationHubUrl}/health`],
     ];
 
     for (const [name, url] of healthTargets) {
@@ -210,6 +217,174 @@ async function main() {
     pass('Day 1 login rate limiting', `statuses: [${statuses.join(', ')}]`);
   } catch (error) {
     fail('Day 1 login rate limiting', error.message);
+  }
+
+  // ─── Day 3: Notification Hub /notify endpoint ───────────────────────
+  log('\n─── Day 3 Tests ───');
+
+  try {
+    const notify = await requestJson(`${config.notificationHubUrl}/notify`, {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: '2100411',
+        orderId: 'test-notify-001',
+        status: 'Ready',
+      }),
+    });
+
+    assert(notify.status === 200, `Expected 200, got ${notify.status}`);
+    assert(
+      notify.body?.message === 'Notification broadcasted',
+      `Expected "Notification broadcasted", got ${JSON.stringify(notify.body)}`
+    );
+    pass('Day 3 notification hub /notify endpoint');
+  } catch (error) {
+    fail('Day 3 notification hub /notify endpoint', error.message);
+  }
+
+  // ─── Day 3: /notify validates payload ───────────────────────────────
+  try {
+    const badNotify = await requestJson(`${config.notificationHubUrl}/notify`, {
+      method: 'POST',
+      body: JSON.stringify({ studentId: '2100411' }), // missing orderId, status
+    });
+
+    assert(badNotify.status === 400, `Expected 400, got ${badNotify.status}`);
+    pass('Day 3 notification hub rejects incomplete payload');
+  } catch (error) {
+    fail('Day 3 notification hub rejects incomplete payload', error.message);
+  }
+
+  // ─── Day 3: Kitchen Queue processes order end-to-end ────────────────
+  // Place an order, then poll notification hub health to confirm the
+  // worker picks up the job. We validate by checking that the order
+  // succeeds (201) and then waiting enough time for the kitchen worker
+  // to process (3-7s) and call /notify.
+  if (token) {
+    try {
+      // Reset stock for this test
+      if (redisAvailable) {
+        runDockerRedis('SET stock:iftar-box-01 50');
+      }
+      if (dbAvailable) {
+        runDockerDbSql(
+          "UPDATE items SET quantity = 50, version = 0 WHERE id = 'iftar-box-01';"
+        );
+      }
+
+      const order = await requestJson(`${config.gatewayUrl}/order`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+        body: JSON.stringify({ itemId: 'iftar-box-01', quantity: 1 }),
+      });
+
+      assert(order.status === 201, `Expected 201, got ${order.status}`);
+      assert(order.body?.orderId, 'orderId missing');
+      pass('Day 3 order enqueued to kitchen', `orderId: ${order.body.orderId}`);
+
+      // Wait for kitchen worker to process (max 3-7s cook + network)
+      log('  ⏳ Waiting 9s for kitchen worker to process...');
+      await new Promise((r) => setTimeout(r, 9000));
+
+      // Verify the worker ran by checking the queue is drained.
+      // We use Redis to inspect BullMQ completed count.
+      if (redisAvailable) {
+        const completedRaw = runDockerRedis('ZCARD bull:cook_order:completed');
+        const completed = parseInt(completedRaw, 10);
+        assert(completed >= 1, `Expected ≥1 completed jobs, got ${completed}`);
+        pass('Day 3 kitchen worker processed job', `completed jobs: ${completed}`);
+      } else {
+        skip('Day 3 kitchen worker processed job', 'Redis not available to inspect queue');
+      }
+    } catch (error) {
+      fail('Day 3 kitchen queue end-to-end', error.message);
+    }
+  } else {
+    skip('Day 3 kitchen queue end-to-end', 'no token');
+  }
+
+  // ─── Thundering Herd: concurrent burst test ─────────────────────────
+  log('\n─── Thundering Herd Test ───');
+
+  if (token && redisAvailable && dbAvailable) {
+    const HERD_STOCK = 10;
+    const HERD_REQUESTS = 25;
+    const ITEM_ID = 'iftar-box-02';
+
+    try {
+      // Reset to exactly HERD_STOCK units
+      runDockerDbSql(
+        `UPDATE items SET quantity = ${HERD_STOCK}, version = 0 WHERE id = '${ITEM_ID}';`
+      );
+      runDockerRedis(`SET stock:${ITEM_ID} ${HERD_STOCK}`);
+      pass('Thundering herd precondition reset', `stock=${HERD_STOCK}, requests=${HERD_REQUESTS}`);
+
+      // Fire HERD_REQUESTS concurrent order requests
+      const promises = Array.from({ length: HERD_REQUESTS }, () =>
+        requestJson(`${config.gatewayUrl}/order`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}` },
+          body: JSON.stringify({ itemId: ITEM_ID, quantity: 1 }),
+        })
+      );
+
+      const responses = await Promise.all(promises);
+
+      const succeeded = responses.filter((r) => r.status === 201).length;
+      const outOfStock = responses.filter((r) => r.status === 400).length;
+      const conflicts = responses.filter((r) => r.status === 409).length;
+      const otherErrors = responses.filter(
+        (r) => ![201, 400, 409].includes(r.status)
+      ).length;
+
+      log(`  Results: ${succeeded} succeeded, ${outOfStock} out-of-stock, ${conflicts} conflicts, ${otherErrors} other`);
+
+      // Core assertion: cannot sell more than available stock
+      assert(
+        succeeded <= HERD_STOCK,
+        `Oversold! ${succeeded} orders succeeded but only ${HERD_STOCK} in stock`
+      );
+      pass(
+        'Thundering herd no overselling',
+        `${succeeded}/${HERD_REQUESTS} succeeded (max ${HERD_STOCK})`
+      );
+
+      // Verify DB quantity is non-negative (no overselling at DB level)
+      const dbResult = runDockerDbSql(
+        `SELECT quantity FROM items WHERE id = '${ITEM_ID}';`, true
+      );
+      const dbQty = parseInt(dbResult.trim(), 10);
+      assert(dbQty >= 0, `DB quantity went negative: ${dbQty}`);
+      assert(
+        dbQty === HERD_STOCK - succeeded,
+        `DB quantity mismatch: expected ${HERD_STOCK - succeeded}, got ${dbQty}`
+      );
+      pass('Thundering herd DB integrity', `remaining=${dbQty}`);
+
+      // Verify Redis cache is in sync with DB
+      const redisQty = parseInt(runDockerRedis(`GET stock:${ITEM_ID}`), 10);
+      assert(redisQty >= 0, `Redis stock went negative: ${redisQty}`);
+      assert(
+        redisQty === dbQty,
+        `Redis/DB mismatch: Redis=${redisQty}, DB=${dbQty}`
+      );
+      pass('Thundering herd Redis-DB cache sync', `Redis=${redisQty}, DB=${dbQty}`);
+    } catch (error) {
+      fail('Thundering herd test', error.message);
+    } finally {
+      // Clean up: restore stock
+      try {
+        runDockerDbSql(
+          `UPDATE items SET quantity = 50, version = 0 WHERE id = '${ITEM_ID}';`
+        );
+        runDockerRedis(`SET stock:${ITEM_ID} 50`);
+      } catch { /* best effort */ }
+    }
+  } else {
+    skip(
+      'Thundering herd test',
+      'Requires token + Redis + DB containers'
+    );
   }
 
   finalizeAndExit();
