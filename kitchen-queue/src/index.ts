@@ -53,15 +53,21 @@ const worker = new Worker<OrderJob>(
     }
 
     if (state === 'cooked') {
-      console.log(`⏭️ Order ${orderId} already cooked, retrying notification only`);
-    } else {
-      // Phase 1: Cook
-      await markProcessing(orderId);
+        console.log(`⏭️ Order ${orderId} already cooked, retrying notification only`);
+      } else {
+        // Phase 1: Cook
+        await markProcessing(orderId);
 
-      const cookingTime = Math.random() * 4000 + 3000; // 3000ms to 7000ms
-      console.log(`⏰ Cooking time: ${Math.round(cookingTime / 1000)}s`);
+        const cookingTime = Math.random() * 4000 + 3000; // 3000ms to 7000ms
+        console.log(`⏳ Cooking time: ${Math.round(cookingTime / 1000)}s`);
 
-      await new Promise((resolve) => setTimeout(resolve, cookingTime));
+        await new Promise((resolve) => setTimeout(resolve, cookingTime));
+
+        // Chaos injection: 10% chance to fail cooking
+        if (config.chaosEnabled && Math.random() < 0.1) {
+          console.error(`💥 CHAOS: Randomly failing worker for order ${orderId}`);
+          throw new Error('Chaos Engineering Failure in Kitchen Queue');
+        }
 
       await markCooked(orderId);
       console.log(`✅ Order ${orderId} cooked!`);

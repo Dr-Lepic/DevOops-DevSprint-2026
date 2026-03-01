@@ -10,6 +10,7 @@ const envSchema = z.object({
   PORT: z.string().default('3000'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   QUEUE_NAME: z.string().default('cook_order'),
+  CHAOS_ENABLED: z.string().default('false').transform(val => val === 'true'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -26,4 +27,5 @@ export const config = {
   port: parseInt(parsedEnv.data.PORT, 10),
   nodeEnv: parsedEnv.data.NODE_ENV,
   queueName: parsedEnv.data.QUEUE_NAME,
+  chaosEnabled: parsedEnv.data.CHAOS_ENABLED,
 };

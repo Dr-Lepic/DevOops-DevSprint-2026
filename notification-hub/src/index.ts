@@ -1,3 +1,4 @@
+import { createNotifyHandler } from './controllers/notifyController';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -60,32 +61,7 @@ io.on('connection', (socket) => {
 });
 
 // REST API endpoint for Kitchen Worker to notify
-app.post('/notify', (req, res) => {
-  try {
-    const { studentId, orderId, status } = req.body;
-
-    if (!studentId || !orderId || !status) {
-      res.status(400).json({ error: 'studentId, orderId, and status are required' });
-      return;
-    }
-
-    console.log(`📢 Broadcasting to student ${studentId}: Order ${orderId} is ${status}`);
-
-    // Emit to the specific student's room
-    io.to(studentId).emit('orderStatusUpdate', {
-      orderId,
-      status,
-      timestamp: new Date().toISOString(),
-    });
-
-    notificationsSentTotal.inc();
-
-    res.status(200).json({ message: 'Notification broadcasted' });
-  } catch (error) {
-    console.error('Notify error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+app.post('/notify', createNotifyHandler(io));
 
 // Prometheus metrics endpoint
 app.get('/metrics', metricsHandler);

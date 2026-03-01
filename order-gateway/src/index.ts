@@ -3,6 +3,7 @@ import cors from 'cors';
 import { config } from './config/env';
 import routes from './routes';
 import { metricsMiddleware } from './middlewares/metricsMiddleware';
+import { createChaosMiddleware } from './middlewares/chaosMiddleware';
 
 const app = express();
 
@@ -10,6 +11,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(metricsMiddleware);
+app.use(createChaosMiddleware(config.chaosEnabled));
 
 app.use('/', routes);
 
