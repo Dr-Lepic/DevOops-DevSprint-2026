@@ -1,10 +1,11 @@
 import express from 'express';
 import { login } from '../controllers/authController';
+import { loginRateLimiter } from '../middlewares/rateLimiter';
 
 const router = express.Router();
 
 // Routes
-router.post('/login', login);
+router.post('/login', loginRateLimiter, login);
 
 // Health check endpoint
 router.get('/health', (req, res) => {
