@@ -9,6 +9,15 @@ const queue = new Queue(config.queueName, {
     host: redisUrl.hostname,
     port: parseInt(redisUrl.port || '6379', 10),
   },
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 2000,
+    },
+    removeOnComplete: 100,
+    removeOnFail: 50,
+  },
 });
 
 export const enqueueOrder = async (payload: {
@@ -21,6 +30,8 @@ export const enqueueOrder = async (payload: {
   await queue.add('cook_order', {
     ...payload,
     orderId,
+  }, {
+    jobId: orderId,
   });
 
   return orderId;

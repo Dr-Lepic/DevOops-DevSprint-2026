@@ -63,14 +63,52 @@ This section records actual implementation progress so team members can quickly 
   - Notification hub broadcasts via Socket.io
   - Real-time status updates visible on `/status` page
 
-### ⏳ Pending (Expected for Day 4+)
-- Admin dashboard for monitoring all orders (`/admin`)
-- Prometheus `/metrics` endpoints
-- Health check endpoints with detailed service status
-- Idempotency logic refinement in Kitchen Worker
-- Chaos engineering toggle
-- CI/CD pipeline with GitHub Actions
-- Unit tests for critical services
+### ⏳ Pending (Expected for Day 5+)
+- None! All core hackathon tasks are complete.
+
+### ✅ Completed (Day 5 Scope)
+- Installed `jest` and `ts-jest` for automated unit testing.
+- Written 30+ passing unit tests covering all 5 core APIs and functions: `orderController`, `stockController`, `idempotencyService`, `authController`, `notifyController`.
+- Hardened `docker-compose.yml` with proper inline health-checks for Redis and Postgres databases, leveraging `depends_on: { condition: service_healthy }` to orchestrate booting safely.
+- Implemented `chaosMiddleware.ts` for chaos engineering: injecting random 500 errors (5%) and latency spikes up to 5s (10%) on API calls. Added chaos task failures to BullMQ worker queue.
+- Generated `.github/workflows/ci.yml` pipeline that correctly tests standard Node endpoints and executes Docker build checks before system-level testing.
+- Composed a comprehensive `guide.md` specifying external setup tasks for GitHub, AWS EC2 `t3.micro` launch configuration, DNS/IP assignment, and live Chaos testing instructions.
+
+### ✅ Completed (Day 4 Scope)
+- Prometheus `/metrics` endpoints added to all 5 backend services using `prom-client`:
+  - Default Node.js metrics (CPU, memory, event loop, GC) on every service
+  - `identity-provider`: `http_requests_total`, `http_request_duration_seconds`, `login_attempts_total`, `rate_limit_hits_total`
+  - `order-gateway`: `http_requests_total`, `http_request_duration_seconds`, `orders_placed_total`, `stock_cache_checks_total`, `stock_deduction_retries_total`
+  - `stock-service`: `http_requests_total`, `http_request_duration_seconds`, `stock_deductions_total`, `db_query_duration_seconds`, `current_stock_quantity`
+  - `kitchen-queue`: `jobs_processed_total`, `job_processing_duration_seconds`, `jobs_active`, `jobs_waiting`
+  - `notification-hub`: `http_requests_total`, `http_request_duration_seconds`, `notifications_sent_total`, `socket_connections_active`
+- Enhanced `/health` endpoints with dependency checks:
+  - `identity-provider`: checks Redis connectivity
+  - `order-gateway`: checks Redis + stock-service `/health`
+  - `stock-service`: checks Postgres (`SELECT 1`) + Redis
+  - `kitchen-queue`: checks Redis + BullMQ queue stats (waiting/active/completed/failed)
+  - `notification-hub`: reports uptime + active socket connections
+  - All return `status: 'healthy'` or `status: 'degraded'` based on dependency state
+- Kitchen-queue now exposes Express HTTP server on port 3005 (for `/health` + `/metrics`)
+- Kitchen Worker idempotency with two-phase state machine:
+  - Redis-based state tracking (`order:state:{orderId}`) with TTL
+  - Phase 1 (Cook): `null` → `cooking` → `cooked`
+  - Phase 2 (Notify): `cooked` → `completed`
+  - On retry: skips cooking if already `cooked`, skips entirely if `completed`
+  - Prevents duplicate cooking simulations and duplicate notifications
+- Queue producer now sets `jobId = orderId` for BullMQ deduplication at enqueue time
+- Admin Dashboard (`/admin` page) with live health grid:
+  - Polls all 5 backend `/health` endpoints every 5 seconds
+  - Responsive grid (1/2/3 columns) with status badges (Healthy/Degraded/Down)
+  - Dependency status indicators with colored dots
+  - Kitchen-queue card shows queue stats (waiting/active/completed/failed)
+  - Notification-hub card shows active socket connections
+  - Uptime display per service, overall status bar, manual refresh button
+- Visual Alert on Order Page:
+  - Measures gateway response latency with `Date.now()` around the `POST /order` call
+  - Amber warning banner when response exceeds 1 second: "Gateway responded in Xms (>1s)"
+  - Normal response time shown in subtle gray text when under 1s
+- Navigation: Admin link added to order page header
 
 ## 1. System Architecture & Tech Stack
 

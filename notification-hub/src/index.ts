@@ -1,8 +1,10 @@
+import { createNotifyHandler } from './controllers/notifyController';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { config } from './config/env';
+import { httpRequestsTotal, httpRequestDuration, notificationsSentTotal, socketConnectionsActive, metricsHandler } from './metrics';
 
 const app = express();
 const httpServer = createServer(app);
@@ -24,6 +26,19 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Metrics middleware
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    const durationNs = Number(process.hrtime.bigint() - start);
+    const durationSec = durationNs / 1e9;
+    const route = req.route?.path || req.path || 'unknown';
+    httpRequestsTotal.inc({ method: req.method, route, status_code: res.statusCode.toString() });
+    httpRequestDuration.observe({ method: req.method, route, status_code: res.statusCode.toString() }, durationSec);
+  });
+  next();
+});
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   console.log(`🔌 Client connected: ${socket.id}`);
@@ -36,44 +51,27 @@ io.on('connection', (socket) => {
     }
     socket.join(studentId);
     console.log(`✓ Student ${studentId} joined their room`);
+    socketConnectionsActive.set(io.engine.clientsCount);
   });
 
   socket.on('disconnect', () => {
     console.log(`🔌 Client disconnected: ${socket.id}`);
+    socketConnectionsActive.set(io.engine.clientsCount);
   });
 });
 
 // REST API endpoint for Kitchen Worker to notify
-app.post('/notify', (req, res) => {
-  try {
-    const { studentId, orderId, status } = req.body;
+app.post('/notify', createNotifyHandler(io));
 
-    if (!studentId || !orderId || !status) {
-      res.status(400).json({ error: 'studentId, orderId, and status are required' });
-      return;
-    }
+// Prometheus metrics endpoint
+app.get('/metrics', metricsHandler);
 
-    console.log(`📢 Broadcasting to student ${studentId}: Order ${orderId} is ${status}`);
-
-    // Emit to the specific student's room
-    io.to(studentId).emit('orderStatusUpdate', {
-      orderId,
-      status,
-      timestamp: new Date().toISOString(),
-    });
-
-    res.status(200).json({ message: 'Notification broadcasted' });
-  } catch (error) {
-    console.error('Notify error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Health check endpoint
+// Enhanced health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'healthy', 
     service: 'notification-hub',
+    uptime: process.uptime(),
     connections: io.engine.clientsCount,
   });
 });

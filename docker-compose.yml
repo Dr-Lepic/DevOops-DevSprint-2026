@@ -12,7 +12,8 @@ services:
       PORT: 3001
       NODE_ENV: production
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - cafeteria_net
 
@@ -27,9 +28,12 @@ services:
       NEXT_PUBLIC_GATEWAY_URL: http://localhost:3000
       NEXT_PUBLIC_IDENTITY_URL: http://localhost:3001
       NEXT_PUBLIC_HUB_URL: http://localhost:3003
+      NEXT_PUBLIC_KITCHEN_QUEUE_URL: http://localhost:3005
+      NEXT_PUBLIC_STOCK_SERVICE_URL: http://localhost:3002
       PORT: 3004
     depends_on:
-      - identity-provider
+      identity-provider:
+        condition: service_started
     networks:
       - cafeteria_net
 
@@ -47,10 +51,14 @@ services:
       PORT: 3000
       NODE_ENV: production
       QUEUE_NAME: cook_order
+      CHAOS_ENABLED: "false"
     depends_on:
-      - identity-provider
-      - redis
-      - stock-service
+      identity-provider:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      stock-service:
+        condition: service_started
     networks:
       - cafeteria_net
 
@@ -66,9 +74,12 @@ services:
       REDIS_URL: redis://redis:6379
       PORT: 3002
       NODE_ENV: production
+      CHAOS_ENABLED: "false"
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - cafeteria_net
 
@@ -77,14 +88,20 @@ services:
       context: ./kitchen-queue
       dockerfile: Dockerfile
     container_name: kitchen-queue
+    ports:
+      - "3005:3005"
     environment:
       REDIS_URL: redis://redis:6379
       NOTIFICATION_HUB_URL: http://notification-hub:3003
       QUEUE_NAME: cook_order
       NODE_ENV: production
+      PORT: 3005
+      CHAOS_ENABLED: "false"
     depends_on:
-      - redis
-      - notification-hub
+      redis:
+        condition: service_healthy
+      notification-hub:
+        condition: service_started
     networks:
       - cafeteria_net
 
@@ -111,6 +128,11 @@ services:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: pass
       POSTGRES_DB: cafeteria
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d cafeteria"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
@@ -122,6 +144,11 @@ services:
     container_name: redis
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - cafeteria_net
 
