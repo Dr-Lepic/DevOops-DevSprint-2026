@@ -240,14 +240,14 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    // Check if already authenticated
+    // Check existing admin auth for this page
     if (typeof window !== 'undefined') {
       const adminAuth =window.sessionStorage.getItem('admin_auth');
       if (adminAuth === 'verified') {
         setIsAuthenticated(true);
       }
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

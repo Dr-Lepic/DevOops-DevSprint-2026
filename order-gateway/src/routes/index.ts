@@ -44,6 +44,22 @@ router.get('/metrics', metricsHandler);
 
 // Enhanced health check endpoint
 router.get('/health', async (req, res) => {
+  const killed = getServiceKilled();
+
+  if (killed) {
+    res.status(503).json({
+      status: 'down',
+      service: 'order-gateway',
+      uptime: process.uptime(),
+      dependencies: {
+        redis: 'up',
+        stockService: 'up',
+      },
+      killed: true,
+    });
+    return;
+  }
+
   let redisStatus = 'down';
   let stockServiceStatus = 'down';
 
@@ -69,6 +85,7 @@ router.get('/health', async (req, res) => {
       redis: redisStatus,
       stockService: stockServiceStatus,
     },
+    killed: false,
   });
 });
 

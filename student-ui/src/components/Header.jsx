@@ -27,11 +27,10 @@ export default function Header() {
   const navItems = [
     { label: 'Order', path: '/order', icon: '🍽️' },
     { label: 'Status', path: '/status', icon: '📦' },
-    { label: 'Admin', path: '/admin', icon: '⚙️' },
   ];
 
-  // Don't show header on login page
-  if (pathname === '/login') return null;
+  // Don't show shared student header on login/admin pages
+  if (pathname === '/login' || pathname === '/admin') return null;
 
   return (
     <header className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg">

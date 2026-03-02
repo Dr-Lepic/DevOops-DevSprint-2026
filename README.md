@@ -92,7 +92,7 @@ docker compose down -v
 
 ### Test E — Admin Dashboard
 
-1. Go to http://localhost:3004/admin (or click "Admin" link on the order page)
+1. Go directly to http://localhost:3004/admin
 2. You should see a grid of 5 service cards, each showing:
    - **Status badge**: Healthy (green), Degraded (amber), or Down (red)
    - **Uptime** in hours/minutes/seconds
