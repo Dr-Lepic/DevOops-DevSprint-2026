@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { config } from './config/env';
 import routes from './routes';
+import { redisClient } from './middlewares/rateLimiter';
 import { metricsMiddleware } from './middlewares/metricsMiddleware';
 
 const app = express();
@@ -30,12 +31,14 @@ app.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
+  await redisClient.quit();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully');
+  await redisClient.quit();
   process.exit(0);
 });

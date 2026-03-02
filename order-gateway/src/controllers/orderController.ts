@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { config } from '../config/env';
 import { getCachedStock } from '../services/cacheService';
 import { enqueueOrder } from '../services/queueService';
@@ -15,6 +16,7 @@ const sleep = (milliseconds: number): Promise<void> =>
 const deductStockWithRetry = async (
   itemId: string,
   quantity: number,
+  idempotencyKey: string,
   maxRetries = 2
 ): Promise<DeductResponse> => {
   let attempt = 0;
@@ -24,7 +26,12 @@ const deductStockWithRetry = async (
       const response = await axios.post<DeductResponse>(
         `${config.stockServiceUrl}/deduct`,
         { itemId, quantity },
-        { timeout: 1500 }
+        {
+          timeout: 1500,
+          headers: {
+            'Idempotency-Key': idempotencyKey,
+          },
+        }
       );
 
       return response.data;
@@ -61,7 +68,14 @@ export const placeOrder = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    await deductStockWithRetry(itemId, quantity);
+    const idempotencyKeyHeader =
+      (typeof req.header === 'function' && req.header('Idempotency-Key')) ||
+      req.headers?.['idempotency-key'] ||
+      req.headers?.['Idempotency-Key'];
+
+    const idempotencyKey =
+      (typeof idempotencyKeyHeader === 'string' ? idempotencyKeyHeader : undefined) || randomUUID();
+    await deductStockWithRetry(itemId, quantity, idempotencyKey);
 
     const studentId = req.user?.studentId;
 

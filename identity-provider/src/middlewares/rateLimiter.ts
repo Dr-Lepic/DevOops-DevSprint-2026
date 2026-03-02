@@ -3,14 +3,30 @@ import { RedisStore } from 'rate-limit-redis';
 import { createClient } from 'redis';
 import { config } from '../config/env';
 
-const redisClient = createClient({ url: config.redisUrl });
-
-redisClient.connect().catch((err) => {
-  console.error('Rate-limit Redis connection error:', err);
+// Create Redis client with robust reconnect strategy
+const redisClient = createClient({
+  url: config.redisUrl,
+  socket: {
+    reconnectStrategy: (retries) => {
+      if (retries > 10) {
+        console.error('❌ Redis: Too many reconnection attempts');
+        return new Error('Too many reconnection attempts');
+      }
+      return Math.min(retries * 100, 3000);
+    },
+  },
 });
 
 redisClient.on('error', (err) => {
-  console.error('Rate-limit Redis client error:', err);
+  console.error('❌ Redis Client Error:', err);
+});
+
+redisClient.on('connect', () => {
+  console.log('✅ Redis connected for rate limiter');
+});
+
+redisClient.connect().catch((err) => {
+  console.error('Rate-limit Redis connection error:', err);
 });
 
 /**
@@ -22,13 +38,32 @@ export const loginRateLimiter = rateLimit({
   max: 3,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many login attempts, please try again later' },
+  // Custom key generator: use studentId from body if available, otherwise use IP
   keyGenerator: (req) => {
-    // Use studentId from body if available, otherwise fall back to IP
     const studentId = req.body?.studentId;
-    return studentId ? `login:${studentId}` : `login:${req.ip}`;
+    if (studentId) {
+      return `login:student:${studentId}`;
+    }
+    // Fallback to IP address
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    return `login:ip:${ip}`;
   },
+  // Custom handler for rate limit exceeded
+  handler: (req, res) => {
+    const studentId = req.body?.studentId;
+    const identifier = studentId ? `Student ID: ${studentId}` : `IP: ${req.ip}`;
+    console.log(`⚠️  Rate limit exceeded for ${identifier}`);
+    res.status(429).json({
+      error: 'Too many login attempts. Please try again later.',
+      retryAfter: '60 seconds',
+    });
+  },
+  // Use Redis as the store
   store: new RedisStore({
     sendCommand: (...args: string[]) => redisClient.sendCommand(args),
   }),
 });
+
+// Export Redis client for graceful shutdown
+export { redisClient };
+  skipFailedRequests: false
