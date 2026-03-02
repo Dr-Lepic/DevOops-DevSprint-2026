@@ -11,6 +11,7 @@ import {
   markCompleted,
   closeIdempotencyRedis,
 } from './services/idempotencyService';
+import { chaosKillMiddleware, getServiceKilled, setServiceKilled } from './middlewares/chaosMiddleware';
 
 interface OrderJob {
   studentId: string;
@@ -116,8 +117,29 @@ worker.on('error', (err) => {
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(chaosKillMiddleware);
 
 app.get('/metrics', metricsHandler);
+
+// Chaos engineering endpoints
+app.get('/chaos/state', (req, res) => {
+  res.json({
+    killed: getServiceKilled(),
+    service: 'kitchen-queue',
+  });
+});
+
+app.post('/chaos/kill', (req, res) => {
+  setServiceKilled(true);
+  console.warn('🔴 CHAOS: Service kill switch activated');
+  res.json({ status: 'killed', message: 'Service will now return 503 for all requests (except health/metrics/chaos)' });
+});
+
+app.post('/chaos/recover', (req, res) => {
+  setServiceKilled(false);
+  console.log('✅ CHAOS: Service kill switch deactivated');
+  res.json({ status: 'recovered', message: 'Service is now operational' });
+});
 
 app.get('/health', async (req, res) => {
   let redisStatus = 'down';
@@ -137,7 +159,8 @@ app.get('/health', async (req, res) => {
     jobsActive.set(queueStats.active);
   } catch {}
 
-  const overallStatus = redisStatus === 'up' ? 'healthy' : 'degraded';
+  const isKilled = getServiceKilled();
+  const overallStatus = isKilled ? 'down' : (redisStatus === 'up' ? 'healthy' : 'degraded');
 
   const statusCode = overallStatus === 'healthy' ? 200 : 503;
 

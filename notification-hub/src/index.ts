@@ -5,6 +5,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { config } from './config/env';
 import { httpRequestsTotal, httpRequestDuration, notificationsSentTotal, socketConnectionsActive, metricsHandler } from './metrics';
+import { chaosKillMiddleware, getServiceKilled, setServiceKilled } from './middlewares/chaosMiddleware';
 
 const app = express();
 const httpServer = createServer(app);
@@ -25,6 +26,8 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(chaosKillMiddleware);
+app.use(chaosKillMiddleware);
 
 // Metrics middleware
 app.use((req, res, next) => {
@@ -66,10 +69,34 @@ app.post('/notify', createNotifyHandler(io));
 // Prometheus metrics endpoint
 app.get('/metrics', metricsHandler);
 
+// Chaos engineering endpoints
+app.get('/chaos/state', (req, res) => {
+  res.json({
+    killed: getServiceKilled(),
+    service: 'notification-hub',
+  });
+});
+
+app.post('/chaos/kill', (req, res) => {
+  setServiceKilled(true);
+  console.warn('🔴 CHAOS: Service kill switch activated');
+  res.json({ status: 'killed', message: 'Service will now return 503 for all requests (except health/metrics/chaos)' });
+});
+
+app.post('/chaos/recover', (req, res) => {
+  setServiceKilled(false);
+  console.log('✅ CHAOS: Service kill switch deactivated');
+  res.json({ status: 'recovered', message: 'Service is now operational' });
+});
+
 // Enhanced health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'healthy', 
+  const isKilled = getServiceKilled();
+  const overallStatus = isKilled ? 'down' : 'healthy';
+  const statusCode = overallStatus === 'healthy' ? 200 : 503;
+
+  res.status(statusCode).json({ 
+    status: overallStatus, 
     service: 'notification-hub',
     uptime: process.uptime(),
     connections: io.engine.clientsCount,

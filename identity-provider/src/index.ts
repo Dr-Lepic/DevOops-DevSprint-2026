@@ -4,6 +4,7 @@ import { config } from './config/env';
 import routes from './routes';
 import { redisClient } from './middlewares/rateLimiter';
 import { metricsMiddleware } from './middlewares/metricsMiddleware';
+import { chaosKillMiddleware } from './middlewares/chaosMiddleware';
 
 const app = express();
 
@@ -12,6 +13,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(metricsMiddleware);
+app.use(chaosKillMiddleware);
 
 // Routes
 app.use('/', routes);
