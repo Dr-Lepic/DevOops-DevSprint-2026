@@ -54,7 +54,53 @@ Browser
 
 ---
 
-## 3) Service Details (Tech + How It Works)
+## 2.1) Requirements Compliance (Submission Checklist)
+
+| Requirement Area | Required | Implemented |
+|---|---|---|
+| Single-command startup | Run full system with one command | ✅ `docker compose up --build -d` starts the full stack |
+| Token handshake | Client must login to get secure token | ✅ `POST /login` in Identity Provider returns JWT |
+| Protected routes | Gateway must reject missing/invalid bearer token | ✅ Gateway auth middleware returns `401` |
+| Idempotency (partial failures) | Prevent duplicate effects on retries | ✅ Gateway forwards `Idempotency-Key`; Stock Service replays prior success for duplicate key; Kitchen Queue uses idempotent state machine |
+| Asynchronous processing | Fast ack + decoupled execution | ✅ Gateway enqueues BullMQ job and returns immediately; Kitchen worker processes async (3–7s) |
+| Cache-first stock check | Reject on cached zero stock before DB hit | ✅ Gateway checks Redis `stock:{itemId}` before stock-service call |
+| Stock concurrency safety | Prevent overselling under concurrent load | ✅ Stock Service uses PostgreSQL optimistic locking with `version` column |
+| Unit tests | Validate order/stock logic | ✅ Unit test suites exist across services; root `npm run test:unit` |
+| Automated pipeline | Run tests on push | ✅ GitHub Actions pipeline in `.github/workflows/ci.yml` |
+| Health endpoints | 200 healthy, 503 dependency down | ✅ Dependency-aware `/health` implemented with proper status codes |
+| Metrics endpoints | Machine-readable throughput/latency/error metrics | ✅ `/metrics` on all backend services (Prometheus format) |
+| Student UI journey | Login → order → live status flow | ✅ `/login`, `/order`, `/status` with realtime Socket.io updates |
+| Status progression | `Pending → Stock Verified → In Kitchen → Ready` | ✅ Implemented in order/status UI flow |
+| Admin health grid | Green/Red (and degraded) service state visibility | ✅ `/admin` health cards with dependency indicators |
+| Admin live metrics | Realtime latency + throughput | ✅ Dashboard computes and displays per-service metrics from `/metrics` |
+| Chaos toggle | Manual service kill trigger from UI | ✅ Admin kill/recover controls for gateway |
+
+### Bonus Coverage Snapshot
+
+- ✅ **Rate limiting**: Identity Provider limits login attempts (3/minute).
+- ✅ **Visual latency alert**: Order page warns when gateway response exceeds 1s.
+
+
+### Quick Evidence Commands
+
+```bash
+# 1) System up
+docker compose up --build -d
+
+# 2) Health and status codes
+curl -i http://localhost:3000/health
+
+# 3) Metrics endpoint
+curl http://localhost:3000/metrics
+
+# 4) Automated tests
+npm run test
+npm run test:unit
+```
+
+---
+
+## 3) Service Details 
 
 ### Identity Provider
 - **Tech**: Node.js, Express, TypeScript, `jsonwebtoken`, Redis, `express-rate-limit`.
