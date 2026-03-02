@@ -23,6 +23,7 @@ export default function OrderPage() {
   const [orderId, setOrderId] = useState('');
   const [orderStatus, setOrderStatus] = useState('');
   const [latency, setLatency] = useState(null);
+  const [retryIdempotencyKey, setRetryIdempotencyKey] = useState('');
 
   const gatewayUrl = useMemo(() => {
     return process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:3000';
@@ -33,6 +34,14 @@ export default function OrderPage() {
   }, []);
 
   const selectedItem = MENU_ITEMS.find(item => item.id === itemId) || MENU_ITEMS[0];
+
+  const createIdempotencyKey = () => {
+    if (typeof window !== 'undefined' && window.crypto?.randomUUID) {
+      return window.crypto.randomUUID();
+    }
+
+    return `order-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  };
 
   // Named handler for socket cleanup
   const handleStatusUpdate = useCallback((data) => {
@@ -92,6 +101,7 @@ export default function OrderPage() {
     setOrderId('');
     setOrderStatus('Pending');
     setLatency(null);
+    const idempotencyKey = retryIdempotencyKey || createIdempotencyKey();
 
     const startTime = Date.now();
 
@@ -105,6 +115,7 @@ export default function OrderPage() {
         {
           headers: {
             Authorization: `Bearer ${token}`,
+            'Idempotency-Key': idempotencyKey,
           },
         }
       );
@@ -116,7 +127,8 @@ export default function OrderPage() {
       setMessage(`✅ ${response.data?.message || 'Order placed successfully'}`);
       const newOrderId = response.data?.orderId || '';
       setOrderId(newOrderId);
-      setOrderStatus('In Kitchen');
+      setOrderStatus('Stock Verified');
+      setRetryIdempotencyKey('');
 
       // Persist new order to localStorage
       if (newOrderId) {
@@ -127,12 +139,29 @@ export default function OrderPage() {
             itemId,
             itemName: selectedItem.name,
             quantity: Number(quantity),
-            status: 'In Kitchen',
+            status: 'Stock Verified',
             timestamp: new Date().toISOString(),
           });
           window.localStorage.setItem('cafeteria_orders', JSON.stringify(stored));
         } catch { /* ignore */ }
       }
+
+      window.setTimeout(() => {
+        setOrderStatus('In Kitchen');
+
+        if (!newOrderId) {
+          return;
+        }
+
+        try {
+          const stored = JSON.parse(window.localStorage.getItem('cafeteria_orders') || '[]');
+          const idx = stored.findIndex((o) => o.orderId === newOrderId);
+          if (idx >= 0) {
+            stored[idx] = { ...stored[idx], status: 'In Kitchen' };
+            window.localStorage.setItem('cafeteria_orders', JSON.stringify(stored));
+          }
+        } catch { /* ignore */ }
+      }, 500);
     } catch (error) {
       const statusCode = error?.response?.status;
 
@@ -151,6 +180,7 @@ export default function OrderPage() {
 
       setStatus('error');
       setOrderStatus('');
+      setRetryIdempotencyKey(idempotencyKey);
     }
   };
 
@@ -313,6 +343,8 @@ export default function OrderPage() {
                         className={`px-3 py-1 rounded-full text-xs font-bold ${
                           orderStatus === 'Ready'
                             ? 'bg-green-500 text-white'
+                            : orderStatus === 'Stock Verified'
+                            ? 'bg-purple-500 text-white'
                             : orderStatus === 'Pending'
                             ? 'bg-amber-500 text-white'
                             : 'bg-blue-500 text-white'

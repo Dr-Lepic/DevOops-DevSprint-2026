@@ -22,6 +22,7 @@ jest.mock('../db/pool', () => ({
 
 jest.mock('../cache/redis', () => ({
   redisClient: {
+    get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue('OK'),
   },
 }));
@@ -119,5 +120,30 @@ describe('stockController - deductStock', () => {
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ message: 'Stock deducted successfully', remaining: 8 });
     expect(mockClient.release).toHaveBeenCalled();
+  });
+
+  it('should replay cached response for duplicate Idempotency-Key without re-deducting', async () => {
+    req = {
+      body: { itemId: 'item-1', quantity: 2 },
+      headers: { 'idempotency-key': 'idem-123' },
+    };
+
+    (redisClient.get as jest.Mock).mockResolvedValueOnce(
+      JSON.stringify({
+        itemId: 'item-1',
+        quantity: 2,
+        response: {
+          message: 'Stock deducted successfully',
+          remaining: 8,
+        },
+      })
+    );
+
+    await deductStock(req as Request, res as Response);
+
+    expect(redisClient.get).toHaveBeenCalledWith('idempotency:stock-deduct:idem-123');
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ message: 'Stock deducted successfully', remaining: 8 });
   });
 });

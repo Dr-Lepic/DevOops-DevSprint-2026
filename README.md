@@ -75,13 +75,13 @@ docker compose down -v
 
 1. On `/order`, use item `iftar-box-01`, quantity `1`
 2. Expected: `201` response — "Stock secured, order in kitchen" with an `orderId`
-3. Status shows "In Kitchen" immediately
+3. Status transitions: `Pending` → `Stock Verified` → `In Kitchen`
 4. **Check the response time** shown below the form — if under 1s, you'll see a subtle gray latency display
 
 ### Test C — Real-Time Status Update
 
 1. Click "View Status" or go to http://localhost:3004/status
-2. Your order appears with status "In Kitchen"
+2. Your order appears with status progression including `Stock Verified` and `In Kitchen`
 3. After 3-7 seconds (simulated cooking), the status auto-updates to "Ready" via Socket.io — no refresh needed
 
 ### Test D — Latency Warning (Visual Alert)
@@ -97,10 +97,12 @@ docker compose down -v
    - **Status badge**: Healthy (green), Degraded (amber), or Down (red)
    - **Uptime** in hours/minutes/seconds
    - **Dependency indicators** with colored dots (e.g., Redis: up, Postgres: up)
+   - **Live Metrics**: average latency (ms) and throughput (/s)
 3. The **kitchen-queue** card additionally shows queue stats: waiting / active / completed / failed
 4. The **notification-hub** card shows the count of active socket connections
-5. The dashboard auto-refreshes every 5 seconds. Click "Refresh Now" for an immediate poll
-6. **Test degraded state**: stop a service (e.g., `docker stop stock-service`) and watch the dashboard update — stock-service shows "Down" (red), order-gateway shows "Degraded" (amber, because its stockService dependency is unreachable). Restart with `docker start stock-service`
+5. Use **Kill Gateway / Recover Gateway** button to simulate manual service kill and recovery
+6. The dashboard auto-refreshes every 5 seconds. Click "Refresh Now" for an immediate poll
+7. **Test degraded state**: stop a dependency (e.g., `docker stop redis`) and watch services report degraded/unreachable behavior. Restart with `docker start redis`
 
 ### Test F — Health Endpoints (curl)
 
@@ -113,7 +115,7 @@ curl http://localhost:3005/health   # kitchen-queue (includes queue stats)
 curl http://localhost:3003/health   # notification-hub (includes socket count)
 ```
 
-Each returns JSON like:
+When dependencies are healthy, endpoint returns `200` with JSON like:
 
 ```json
 {
@@ -126,6 +128,8 @@ Each returns JSON like:
   }
 }
 ```
+
+When dependencies are down, dependent services return `503 Service Unavailable` with `status: "degraded"`.
 
 ### Test G — Prometheus Metrics Endpoints
 
@@ -158,6 +162,12 @@ Returns Prometheus text format with default Node.js runtime metrics plus custom 
    ```
 6. BullMQ retries the job — this time it **skips cooking** (already cooked) and only retries the notification
 7. The Redis key updates to "completed"
+
+### Test I — Idempotency (Stock Deduction Replay Safety)
+
+1. Place an order from `/order` (the UI sends an `Idempotency-Key` header)
+2. Retry the same request with the same `Idempotency-Key`
+3. Expected: stock-service returns the cached success payload and does **not** double-decrement stock
 
 ### Expected Error Responses
 

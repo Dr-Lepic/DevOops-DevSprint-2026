@@ -139,7 +139,9 @@ app.get('/health', async (req, res) => {
 
   const overallStatus = redisStatus === 'up' ? 'healthy' : 'degraded';
 
-  res.status(200).json({
+  const statusCode = overallStatus === 'healthy' ? 200 : 503;
+
+  res.status(statusCode).json({
     status: overallStatus,
     service: 'kitchen-queue',
     uptime: process.uptime(),

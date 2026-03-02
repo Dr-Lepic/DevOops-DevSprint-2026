@@ -95,6 +95,7 @@ export default function StatusPage() {
   const getStatusIcon = (status) => {
     if (!status) return '📦';
     if (status === 'Ready') return '✅';
+    if (status === 'Stock Verified') return '🧾';
     if (status === 'In Kitchen') return '👨‍🍳';
     if (status === 'Pending') return '⏳';
     return '📦';
@@ -103,6 +104,7 @@ export default function StatusPage() {
   const getStatusColor = (status) => {
     if (!status) return 'bg-gray-100 text-gray-800 border-gray-200';
     if (status === 'Ready') return 'bg-green-100 text-green-800 border-green-300';
+    if (status === 'Stock Verified') return 'bg-purple-100 text-purple-800 border-purple-300';
     if (status === 'In Kitchen') return 'bg-blue-100 text-blue-800 border-blue-300';
     if (status === 'Pending') return 'bg-amber-100 text-amber-800 border-amber-300';
     return 'bg-gray-100 text-gray-800 border-gray-200';
@@ -173,7 +175,13 @@ export default function StatusPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {orders.map((order) => (
+              {orders.map((order) => {
+                const isPlaced = Boolean(order.status);
+                const isStockVerified = ['Stock Verified', 'In Kitchen', 'Ready'].includes(order.status);
+                const isInKitchen = ['In Kitchen', 'Ready'].includes(order.status);
+                const isReady = order.status === 'Ready';
+
+                return (
                 <div
                   key={order.orderId}
                   className="bg-white rounded-xl shadow-md border-2 border-gray-200 hover:shadow-lg transition-shadow overflow-hidden"
@@ -214,18 +222,23 @@ export default function StatusPage() {
                     {/* Status Timeline */}
                     <div className="mt-4 pt-4 border-t border-gray-200">
                       <div className="flex items-center justify-between text-xs">
-                        <div className={`flex items-center gap-2 ${order.status ? 'text-green-600' : 'text-gray-400'}`}>
-                          <div className={`w-3 h-3 rounded-full ${order.status ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                        <div className={`flex items-center gap-2 ${isPlaced ? 'text-green-600' : 'text-gray-400'}`}>
+                          <div className={`w-3 h-3 rounded-full ${isPlaced ? 'bg-green-500' : 'bg-gray-300'}`}></div>
                           <span className="font-medium">Placed</span>
                         </div>
-                        <div className={`flex-1 h-0.5 mx-2 ${order.status === 'In Kitchen' || order.status === 'Ready' ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
-                        <div className={`flex items-center gap-2 ${order.status === 'In Kitchen' || order.status === 'Ready' ? 'text-blue-600' : 'text-gray-400'}`}>
-                          <div className={`w-3 h-3 rounded-full ${order.status === 'In Kitchen' || order.status === 'Ready' ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
+                        <div className={`flex-1 h-0.5 mx-2 ${isStockVerified ? 'bg-purple-500' : 'bg-gray-300'}`}></div>
+                        <div className={`flex items-center gap-2 ${isStockVerified ? 'text-purple-600' : 'text-gray-400'}`}>
+                          <div className={`w-3 h-3 rounded-full ${isStockVerified ? 'bg-purple-500' : 'bg-gray-300'}`}></div>
+                          <span className="font-medium">Stock Verified</span>
+                        </div>
+                        <div className={`flex-1 h-0.5 mx-2 ${isInKitchen ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
+                        <div className={`flex items-center gap-2 ${isInKitchen ? 'text-blue-600' : 'text-gray-400'}`}>
+                          <div className={`w-3 h-3 rounded-full ${isInKitchen ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
                           <span className="font-medium">In Kitchen</span>
                         </div>
-                        <div className={`flex-1 h-0.5 mx-2 ${order.status === 'Ready' ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                        <div className={`flex items-center gap-2 ${order.status === 'Ready' ? 'text-green-600' : 'text-gray-400'}`}>
-                          <div className={`w-3 h-3 rounded-full ${order.status === 'Ready' ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
+                        <div className={`flex-1 h-0.5 mx-2 ${isReady ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                        <div className={`flex items-center gap-2 ${isReady ? 'text-green-600' : 'text-gray-400'}`}>
+                          <div className={`w-3 h-3 rounded-full ${isReady ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
                           <span className="font-medium">Ready</span>
                         </div>
                       </div>
@@ -241,7 +254,7 @@ export default function StatusPage() {
                     )}
                   </div>
                 </div>
-              ))}
+              );})}
             </div>
           )}
         </div>

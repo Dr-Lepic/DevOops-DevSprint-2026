@@ -6,6 +6,19 @@ This document outlines the detailed master plan designed to guide an AI Agent in
 
 This section records actual implementation progress so team members can quickly see what is done vs planned.
 
+### ✅ Gap Closure Update (2026-03-02)
+- Health endpoint semantics aligned to requirement for dependency-aware services:
+  - `identity-provider`, `order-gateway`, `stock-service`, `kitchen-queue` now return `503` when dependencies are down.
+- Stock-deduction idempotency (partial failure safety) implemented:
+  - `order-gateway` forwards `Idempotency-Key` to `stock-service`.
+  - `stock-service` caches successful deduction result by idempotency key in Redis and replays response on duplicates.
+- Student journey status flow now explicitly includes `Stock Verified`:
+  - `/order` and `/status` UI updated to show `Pending → Stock Verified → In Kitchen → Ready`.
+- Admin dashboard enhanced with required live metrics:
+  - Per-service average latency and throughput derived from `/metrics` and rendered in service cards.
+- Manual chaos kill toggle added:
+  - Admin dashboard button toggles `order-gateway` kill/recover through runtime chaos control endpoints.
+
 ### ✅ Completed (Day 1 + Day 2 + Day 3 Scope)
 - Identity Provider implemented in `identity-provider/`:
   - `POST /login` with payload validation

@@ -5,6 +5,7 @@ import { metricsHandler } from '../metrics';
 import { createClient } from 'redis';
 import axios from 'axios';
 import { config } from '../config/env';
+import { getServiceKilled, setServiceKilled } from '../middlewares/chaosMiddleware';
 
 const router = express.Router();
 
@@ -14,6 +15,29 @@ healthRedis.connect().catch(() => {});
 healthRedis.on('error', () => {});
 
 router.post('/order', authMiddleware, placeOrder);
+
+router.get('/chaos/state', (req, res) => {
+  res.status(200).json({
+    service: 'order-gateway',
+    killed: getServiceKilled(),
+  });
+});
+
+router.post('/chaos/kill', (req, res) => {
+  setServiceKilled(true);
+  res.status(200).json({
+    service: 'order-gateway',
+    killed: true,
+  });
+});
+
+router.post('/chaos/recover', (req, res) => {
+  setServiceKilled(false);
+  res.status(200).json({
+    service: 'order-gateway',
+    killed: false,
+  });
+});
 
 // Prometheus metrics endpoint
 router.get('/metrics', metricsHandler);
@@ -35,7 +59,9 @@ router.get('/health', async (req, res) => {
 
   const overallStatus = redisStatus === 'up' && stockServiceStatus === 'up' ? 'healthy' : 'degraded';
 
-  res.status(200).json({
+  const statusCode = overallStatus === 'healthy' ? 200 : 503;
+
+  res.status(statusCode).json({
     status: overallStatus,
     service: 'order-gateway',
     uptime: process.uptime(),

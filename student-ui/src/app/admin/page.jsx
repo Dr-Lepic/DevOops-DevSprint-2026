@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import Header from '@/components/Header';
@@ -13,6 +13,77 @@ const SERVICES = [
   { key: 'kitchen-queue', name: 'Kitchen Queue', envKey: 'NEXT_PUBLIC_KITCHEN_QUEUE_URL', fallback: 'http://localhost:3005', icon: '👨‍🍳' },
   { key: 'notification-hub', name: 'Notification Hub', envKey: 'NEXT_PUBLIC_HUB_URL', fallback: 'http://localhost:3003', icon: '📢' },
 ];
+
+const SERVICE_METRIC_KEYS = {
+  'identity-provider': {
+    latencySum: 'http_request_duration_seconds_sum',
+    latencyCount: 'http_request_duration_seconds_count',
+    throughputCounter: 'login_attempts_total',
+  },
+  'order-gateway': {
+    latencySum: 'http_request_duration_seconds_sum',
+    latencyCount: 'http_request_duration_seconds_count',
+    throughputCounter: 'orders_placed_total',
+  },
+  'stock-service': {
+    latencySum: 'http_request_duration_seconds_sum',
+    latencyCount: 'http_request_duration_seconds_count',
+    throughputCounter: 'stock_deductions_total',
+  },
+  'kitchen-queue': {
+    latencySum: 'job_processing_duration_seconds_sum',
+    latencyCount: 'job_processing_duration_seconds_count',
+    throughputCounter: 'jobs_processed_total',
+  },
+  'notification-hub': {
+    latencySum: 'http_request_duration_seconds_sum',
+    latencyCount: 'http_request_duration_seconds_count',
+    throughputCounter: 'notifications_sent_total',
+  },
+};
+
+function sumMetricValues(metricsText, metricName) {
+  if (!metricsText || !metricName) {
+    return null;
+  }
+
+  return metricsText
+    .split('\n')
+    .filter((line) => line && !line.startsWith('#'))
+    .filter((line) => line.startsWith(`${metricName} `) || line.startsWith(`${metricName}{`))
+    .reduce((total, line) => {
+      const value = Number(line.trim().split(' ').pop());
+      return Number.isFinite(value) ? total + value : total;
+    }, 0);
+}
+
+function deriveLiveMetrics(serviceKey, metricsText, previousCounter, elapsedSeconds) {
+  const metricKeys = SERVICE_METRIC_KEYS[serviceKey];
+  if (!metricKeys || !metricsText) {
+    return { latencyMs: null, throughputPerSec: null, counterValue: null };
+  }
+
+  const latencySum = sumMetricValues(metricsText, metricKeys.latencySum);
+  const latencyCount = sumMetricValues(metricsText, metricKeys.latencyCount);
+  const counterValue = sumMetricValues(metricsText, metricKeys.throughputCounter);
+
+  const latencyMs =
+    latencySum !== null && latencyCount !== null && latencyCount > 0
+      ? (latencySum / latencyCount) * 1000
+      : null;
+
+  let throughputPerSec = null;
+  if (counterValue !== null && previousCounter !== null && elapsedSeconds > 0) {
+    const delta = counterValue - previousCounter;
+    throughputPerSec = delta >= 0 ? delta / elapsedSeconds : null;
+  }
+
+  return {
+    latencyMs,
+    throughputPerSec,
+    counterValue,
+  };
+}
 
 function formatUptime(seconds) {
   if (!seconds && seconds !== 0) return '—';
@@ -63,6 +134,9 @@ export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
+  const [chaosKilled, setChaosKilled] = useState(false);
+  const metricsCountersRef = useRef({});
+  const lastPollMsRef = useRef(null);
 
   const ADMIN_PASSWORD = 'admin123'; // Simple password for demo
 
@@ -76,19 +150,66 @@ export default function AdminPage() {
 
   const fetchHealth = useCallback(async () => {
     setPolling(true);
+    const nowMs = Date.now();
+    const elapsedSeconds =
+      lastPollMsRef.current !== null ? (nowMs - lastPollMsRef.current) / 1000 : 0;
+
     const results = await Promise.allSettled(
       SERVICES.map(async (svc) => {
         const url = serviceUrls[svc.key];
-        const res = await axios.get(`${url}/health`, { timeout: 3000 });
-        return { key: svc.key, data: res.data, error: null };
+        const [healthResult, metricsResult] = await Promise.allSettled([
+          axios.get(`${url}/health`, { timeout: 3000, validateStatus: () => true }),
+          axios.get(`${url}/metrics`, { timeout: 3000, responseType: 'text' }),
+        ]);
+
+        return {
+          key: svc.key,
+          healthResult,
+          metricsResult,
+        };
       })
     );
 
     const newData = {};
+    const nextCounters = {};
+
     results.forEach((result, idx) => {
       const svc = SERVICES[idx];
       if (result.status === 'fulfilled') {
-        newData[svc.key] = { ...result.value.data, error: null, lastChecked: new Date().toISOString() };
+        const health = result.value.healthResult;
+        const metrics = result.value.metricsResult;
+        const metricsText =
+          metrics.status === 'fulfilled' ? metrics.value.data : null;
+
+        const previousCounter = metricsCountersRef.current[svc.key] ?? null;
+        const liveMetrics = deriveLiveMetrics(svc.key, metricsText, previousCounter, elapsedSeconds);
+
+        if (liveMetrics.counterValue !== null) {
+          nextCounters[svc.key] = liveMetrics.counterValue;
+        }
+
+        if (health.status === 'fulfilled') {
+          newData[svc.key] = {
+            ...health.value.data,
+            metrics: {
+              latencyMs: liveMetrics.latencyMs,
+              throughputPerSec: liveMetrics.throughputPerSec,
+            },
+            error: null,
+            lastChecked: new Date().toISOString(),
+          };
+        } else {
+          newData[svc.key] = {
+            status: 'down',
+            service: svc.name,
+            metrics: {
+              latencyMs: liveMetrics.latencyMs,
+              throughputPerSec: liveMetrics.throughputPerSec,
+            },
+            error: health.reason?.message || 'Unreachable',
+            lastChecked: new Date().toISOString(),
+          };
+        }
       } else {
         newData[svc.key] = {
           status: 'down',
@@ -99,10 +220,24 @@ export default function AdminPage() {
       }
     });
 
+    try {
+      const chaosStateResponse = await axios.get(`${serviceUrls['order-gateway']}/chaos/state`, { timeout: 2000 });
+      setChaosKilled(Boolean(chaosStateResponse.data?.killed));
+    } catch {}
+
     setHealthData(newData);
+    metricsCountersRef.current = nextCounters;
+    lastPollMsRef.current = nowMs;
     setLastPoll(new Date());
     setPolling(false);
   }, [serviceUrls]);
+
+  const toggleChaosKill = async () => {
+    const target = chaosKilled ? 'recover' : 'kill';
+    await axios.post(`${serviceUrls['order-gateway']}/chaos/${target}`);
+    setChaosKilled(!chaosKilled);
+    await fetchHealth();
+  };
 
   useEffect(() => {
     // Check if already authenticated
@@ -232,6 +367,17 @@ export default function AdminPage() {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
+                  onClick={toggleChaosKill}
+                  className={`px-5 py-2.5 border-2 rounded-lg text-sm font-medium transition-colors shadow-sm ${
+                    chaosKilled
+                      ? 'bg-green-50 border-green-300 hover:bg-green-100 text-green-700'
+                      : 'bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-800'
+                  }`}
+                >
+                  {chaosKilled ? 'Recover Gateway' : 'Kill Gateway'}
+                </button>
+                <button
+                  type="button"
                   onClick={fetchHealth}
                   className="flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-gray-300 hover:border-indigo-500 rounded-lg text-sm font-medium text-gray-700 hover:text-indigo-600 transition-colors shadow-sm"
                   disabled={polling}
@@ -358,6 +504,29 @@ export default function AdminPage() {
                           {Object.entries(data.dependencies).map(([name, status]) => (
                             <DependencyDot key={name} name={name} status={status} />
                           ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Live Metrics */}
+                    {data?.metrics && (
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 uppercase mb-2">Live Metrics</p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                            <p className="text-xs text-slate-600 mb-1">Avg Latency</p>
+                            <p className="text-lg font-bold text-slate-900">
+                              {data.metrics.latencyMs !== null ? `${Math.round(data.metrics.latencyMs)}ms` : '—'}
+                            </p>
+                          </div>
+                          <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                            <p className="text-xs text-slate-600 mb-1">Throughput</p>
+                            <p className="text-lg font-bold text-slate-900">
+                              {data.metrics.throughputPerSec !== null
+                                ? `${data.metrics.throughputPerSec.toFixed(2)}/s`
+                                : '—'}
+                            </p>
+                          </div>
                         </div>
                       </div>
                     )}
