@@ -5,7 +5,9 @@
   "description": "Root-level system test scripts for Day 1 and Day 2",
   "scripts": {
     "test": "node tests/system.test.mjs",
-    "test:unit": "npm --prefix stock-service run test && npm --prefix kitchen-queue run test && npm --prefix order-gateway run test && npm --prefix identity-provider run test && npm --prefix notification-hub run test"
+    "test:unit": "npm --prefix stock-service run test && npm --prefix kitchen-queue run test && npm --prefix order-gateway run test && npm --prefix identity-provider run test && npm --prefix notification-hub run test",
+    "watch:containers": "node scripts/container-watcher.mjs",
+    "watch:containers:once": "node scripts/container-watcher.mjs --once"
   },
   "devDependencies": {
     "socket.io-client": "^4.8.3"

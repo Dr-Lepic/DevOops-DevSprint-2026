@@ -1,52 +1,199 @@
 # DevSprint 2026 — IUT Cafeteria Microservice System
 
-This repository contains the **Day 1 through Day 4 implementation** of a fault-tolerant, scalable cafeteria ordering system built over a 5-day hackathon.
-
-### Services
-
-| Service | Port | Status |
-|---------|------|--------|
-| `identity-provider` | 3001 | ✅ JWT login, rate limiting, `/health`, `/metrics` |
-| `order-gateway` | 3000 | ✅ Auth, Redis pre-check, stock deduction, queue enqueue, `/health`, `/metrics` |
-| `stock-service` | 3002 | ✅ Optimistic locking, cache sync, `/health`, `/metrics` |
-| `kitchen-queue` | 3005 | ✅ BullMQ worker, idempotent two-phase processing, `/health`, `/metrics` |
-| `notification-hub` | 3003 | ✅ Socket.io real-time push, `/health`, `/metrics` |
-| `student-ui` | 3004 | ✅ Login, order, status, admin dashboard |
-| `postgres` | 5432 | ✅ Items table with optimistic locking |
-| `redis` | 6379 | ✅ Cache, queue broker, rate limiting, idempotency |
+A distributed, containerized cafeteria ordering platform designed for high-traffic bursts with authentication, stock safety, async kitchen processing, realtime notifications, and admin observability.
 
 ---
 
-## 1) Prerequisites
+## 1) Service Summary
 
-- **Docker Desktop** (with Docker Compose v2)
-- Node.js 20+ (only needed for local non-Docker development)
+### Core Services
+
+| Service | URL | What It Does |
+|---|---|---|
+| Identity Provider | http://localhost:3001 | Authenticates users and issues JWT tokens; enforces login rate limiting. |
+| Order Gateway | http://localhost:3000 | Main API entrypoint; validates JWT, checks stock cache, coordinates stock deduction and queueing. |
+| Stock Service | http://localhost:3002 | Source of truth for inventory; performs concurrency-safe stock deduction with optimistic locking. |
+| Kitchen Queue | http://localhost:3005 | Processes queued orders asynchronously (3–7s simulation), with idempotent retry-safe handling. |
+| Notification Hub | http://localhost:3003 | Pushes realtime order status updates to clients via Socket.io. |
+| Student UI | http://localhost:3004 | Frontend for student ordering/status and admin monitoring dashboard. |
+
+### Infrastructure
+
+| Service | URL | What It Does |
+|---|---|---|
+| PostgreSQL | localhost:5432 | Persistent transactional store for inventory (`items` table). |
+| Redis | localhost:6379 | Cache, queue broker (BullMQ), rate-limit store, and idempotency state store. |
+
+### Main UI Routes
+
+| Route | URL | Purpose |
+|---|---|---|
+| Student Login | http://localhost:3004/login | Student authentication and token acquisition. |
+| Place Order | http://localhost:3004/order | Authenticated order submission and immediate acknowledgment. |
+| Live Status | http://localhost:3004/status | Realtime order progression tracking. |
+| Admin Dashboard | http://localhost:3004/admin | Password-gated operational monitoring and chaos controls. |
 
 ---
 
-## 2) Quick Start (Docker)
+## 2) Architecture (High-Level)
+
+```text
+Browser
+  ├─ /login  ──> Identity Provider (JWT + rate limit)
+  └─ /order  ──> Order Gateway
+                 ├─ Redis stock pre-check
+                 ├─ Stock Service (Postgres optimistic locking + Redis sync)
+                 └─ BullMQ enqueue to Kitchen Queue
+
+Kitchen Queue
+  └─ /notify ──> Notification Hub (Socket.io broadcast)
+
+Browser
+  └─ Socket.io <── Notification Hub (orderStatusUpdate)
+```
+
+---
+
+## 2.1) Requirements Compliance (Submission Checklist)
+
+| Requirement Area | Required | Implemented |
+|---|---|---|
+| Single-command startup | Run full system with one command | ✅ `docker compose up --build -d` starts the full stack |
+| Token handshake | Client must login to get secure token | ✅ `POST /login` in Identity Provider returns JWT |
+| Protected routes | Gateway must reject missing/invalid bearer token | ✅ Gateway auth middleware returns `401` |
+| Idempotency (partial failures) | Prevent duplicate effects on retries | ✅ Gateway forwards `Idempotency-Key`; Stock Service replays prior success for duplicate key; Kitchen Queue uses idempotent state machine |
+| Asynchronous processing | Fast ack + decoupled execution | ✅ Gateway enqueues BullMQ job and returns immediately; Kitchen worker processes async (3–7s) |
+| Cache-first stock check | Reject on cached zero stock before DB hit | ✅ Gateway checks Redis `stock:{itemId}` before stock-service call |
+| Stock concurrency safety | Prevent overselling under concurrent load | ✅ Stock Service uses PostgreSQL optimistic locking with `version` column |
+| Unit tests | Validate order/stock logic | ✅ Unit test suites exist across services; root `npm run test:unit` |
+| Automated pipeline | Run tests on push | ✅ GitHub Actions pipeline in `.github/workflows/ci.yml` |
+| Health endpoints | 200 healthy, 503 dependency down | ✅ Dependency-aware `/health` implemented with proper status codes |
+| Metrics endpoints | Machine-readable throughput/latency/error metrics | ✅ `/metrics` on all backend services (Prometheus format) |
+| Student UI journey | Login → order → live status flow | ✅ `/login`, `/order`, `/status` with realtime Socket.io updates |
+| Status progression | `Pending → Stock Verified → In Kitchen → Ready` | ✅ Implemented in order/status UI flow |
+| Admin health grid | Green/Red (and degraded) service state visibility | ✅ `/admin` health cards with dependency indicators |
+| Admin live metrics | Realtime latency + throughput | ✅ Dashboard computes and displays per-service metrics from `/metrics` |
+| Chaos toggle | Manual service kill trigger from UI | ✅ Admin kill/recover controls for gateway |
+
+### Bonus Coverage Snapshot
+
+- ✅ **Rate limiting**: Identity Provider limits login attempts (3/minute).
+- ✅ **Visual latency alert**: Order page warns when gateway response exceeds 1s.
+
+
+### Quick Evidence Commands
 
 ```bash
-# From repository root — boots all 8 containers
+# 1) System up
+docker compose up --build -d
+
+# 2) Health and status codes
+curl -i http://localhost:3000/health
+
+# 3) Metrics endpoint
+curl http://localhost:3000/metrics
+
+# 4) Automated tests
+npm run test
+npm run test:unit
+```
+
+---
+
+## 3) Service Details 
+
+### Identity Provider
+- **Tech**: Node.js, Express, TypeScript, `jsonwebtoken`, Redis, `express-rate-limit`.
+- **How it works**:
+  - `POST /login` validates credentials and returns `{ token, studentId }`.
+  - Login attempts are limited (3/minute per student/IP).
+  - Exposes `/health` and `/metrics`.
+
+### Order Gateway
+- **Tech**: Node.js, Express, TypeScript, Axios, Redis, BullMQ.
+- **How it works**:
+  - Auth middleware rejects missing/invalid bearer tokens with `401`.
+  - Checks Redis cache key `stock:{itemId}` before calling stock service.
+  - Calls stock service deduct endpoint with an `Idempotency-Key`.
+  - On success, enqueues kitchen job and returns fast acknowledgment (`201`).
+  - Exposes `/health`, `/metrics`, and chaos kill/recover controls.
+
+### Stock Service
+- **Tech**: Node.js, Express, TypeScript, PostgreSQL, Redis.
+- **How it works**:
+  - Performs stock deduction in a DB transaction.
+  - Uses optimistic locking (`version` column) to prevent race corruption.
+  - Returns `409` on conflict and `400` on insufficient stock.
+  - Replays successful deduction response for duplicate idempotency key to prevent double-decrement on retry.
+  - Syncs updated stock to Redis cache.
+
+### Kitchen Queue
+- **Tech**: Node.js, TypeScript, BullMQ, Redis, Axios, Express (health/metrics server).
+- **How it works**:
+  - Worker consumes `cook_order` jobs.
+  - Simulates prep delay (3–7s), then notifies Notification Hub.
+  - Uses two-phase idempotent state (`cooking` → `cooked` → `completed`) in Redis.
+  - Safe on retries: avoids duplicate cooking/notification actions.
+
+### Notification Hub
+- **Tech**: Node.js, Express, TypeScript, Socket.io.
+- **How it works**:
+  - Clients join room by `studentId`.
+  - Kitchen calls `POST /notify`.
+  - Server emits `orderStatusUpdate` to the correct room.
+  - Exposes `/health` and `/metrics`.
+
+### Student UI (includes Admin)
+- **Tech**: Next.js App Router, React, Tailwind CSS, Axios, Socket.io client.
+- **How it works**:
+  - Student journey: login → place order → realtime status updates.
+  - Status flow: `Pending → Stock Verified → In Kitchen → Ready`.
+  - Admin page (`/admin`) is standalone and password-gated (no student pre-login required).
+  - Admin dashboard shows:
+    - Health grid (healthy/degraded/down)
+    - Live metrics (latency, throughput)
+    - Queue and socket stats
+    - Chaos kill/recover toggle for gateway
+
+---
+
+## 4) Observability and Health Behavior
+
+- Every backend service exposes `/metrics` (Prometheus format).
+- Dependency-aware health endpoints return:
+  - `200` when healthy
+  - `503` when dependencies are down/degraded
+
+Quick checks:
+
+```bash
+curl http://localhost:3001/health
+curl http://localhost:3000/health
+curl http://localhost:3002/health
+curl http://localhost:3005/health
+curl http://localhost:3003/health
+```
+
+---
+
+## 5) Run with Docker (Recommended)
+
+### Prerequisites
+- Docker Desktop (Compose v2)
+
+### Start all services
+
+```bash
 docker compose up --build -d
 ```
 
-Wait ~30 seconds for all services to initialize, then open:
-
-| Page | URL |
-|------|-----|
-| Login | http://localhost:3004/login |
-| Place Order | http://localhost:3004/order |
-| Live Status | http://localhost:3004/status |
-| Admin Dashboard | http://localhost:3004/admin |
-
-Stop everything:
+### Stop all services
 
 ```bash
 docker compose down
 ```
 
-To also wipe the database volume:
+### Stop + remove volumes (fresh reset)
 
 ```bash
 docker compose down -v
@@ -54,223 +201,108 @@ docker compose down -v
 
 ---
 
-## 3) Manual Verification Guide
+## 6) Auto-Heal Container Watcher (Recommended)
 
-### Mock Users
+Use this watcher to keep your Docker Compose stack self-healing during demos and evaluation.
 
-| Student ID | Password |
-|------------|----------|
-| `2100411` | `password123` |
-| `2100412` | `password123` |
-| `2100413` | `password123` |
-| `admin` | `admin123` |
-
-### Test A — Login Flow
-
-1. Open http://localhost:3004/login
-2. Enter `2100411` / `password123`
-3. On success, the app redirects to `/order` with a JWT stored locally
-
-### Test B — Place an Order
-
-1. On `/order`, use item `iftar-box-01`, quantity `1`
-2. Expected: `201` response — "Stock secured, order in kitchen" with an `orderId`
-3. Status transitions: `Pending` → `Stock Verified` → `In Kitchen`
-4. **Check the response time** shown below the form — if under 1s, you'll see a subtle gray latency display
-
-### Test C — Real-Time Status Update
-
-1. Click "View Status" or go to http://localhost:3004/status
-2. Your order appears with status progression including `Stock Verified` and `In Kitchen`
-3. After 3-7 seconds (simulated cooking), the status auto-updates to "Ready" via Socket.io — no refresh needed
-
-### Test D — Latency Warning (Visual Alert)
-
-1. On `/order`, if the gateway takes longer than 1 second to respond, an **amber warning banner** appears:
-   > ⚠ Gateway responded in Xms (>1s) — possible congestion
-2. Under normal conditions you'll see a subtle "Response time: Xms" in gray
-
-### Test E — Admin Dashboard
-
-1. Go directly to http://localhost:3004/admin
-2. You should see a grid of 5 service cards, each showing:
-   - **Status badge**: Healthy (green), Degraded (amber), or Down (red)
-   - **Uptime** in hours/minutes/seconds
-   - **Dependency indicators** with colored dots (e.g., Redis: up, Postgres: up)
-   - **Live Metrics**: average latency (ms) and throughput (/s)
-3. The **kitchen-queue** card additionally shows queue stats: waiting / active / completed / failed
-4. The **notification-hub** card shows the count of active socket connections
-5. Use **Kill Gateway / Recover Gateway** button to simulate manual service kill and recovery
-6. The dashboard auto-refreshes every 5 seconds. Click "Refresh Now" for an immediate poll
-7. **Test degraded state**: stop a dependency (e.g., `docker stop redis`) and watch services report degraded/unreachable behavior. Restart with `docker start redis`
-
-### Test F — Health Endpoints (curl)
+It continuously watches compose services and if any service is missing/down, it automatically runs:
 
 ```bash
-# All services
-curl http://localhost:3001/health   # identity-provider
-curl http://localhost:3000/health   # order-gateway
-curl http://localhost:3002/health   # stock-service
-curl http://localhost:3005/health   # kitchen-queue (includes queue stats)
-curl http://localhost:3003/health   # notification-hub (includes socket count)
+docker compose up -d <service>
 ```
 
-When dependencies are healthy, endpoint returns `200` with JSON like:
+### Why this is important
+- Test service stops and auto restarts.
+- Recovers only affected services (does not recreate everything).
+- Works with the current `docker-compose.yml` project setup.
 
-```json
-{
-  "status": "healthy",
-  "service": "order-gateway",
-  "uptime": 123.456,
-  "dependencies": {
-    "redis": "up",
-    "stockService": "up"
-  }
-}
-```
+### Recommended usage flow
 
-When dependencies are down, dependent services return `503 Service Unavailable` with `status: "degraded"`.
-
-### Test G — Prometheus Metrics Endpoints
+1. Start full stack:
 
 ```bash
-curl http://localhost:3001/metrics   # identity-provider
-curl http://localhost:3000/metrics   # order-gateway
-curl http://localhost:3002/metrics   # stock-service
-curl http://localhost:3005/metrics   # kitchen-queue
-curl http://localhost:3003/metrics   # notification-hub
+docker compose up --build -d
 ```
 
-Returns Prometheus text format with default Node.js runtime metrics plus custom counters/histograms per service.
+2. Start watcher in a separate terminal and keep it running:
 
-### Test H — Idempotency (Kitchen Worker)
+```bash
+npm run watch:containers
+```
 
-1. Place an order normally — it processes and notifies as expected
-2. To verify idempotency, stop the notification-hub mid-processing:
-   ```bash
-   docker stop notification-hub
-   ```
-3. Place an order — the kitchen worker will cook it but fail on notification, moving the job to a retry state
-4. Check Redis for the idempotency key:
-   ```bash
-   docker exec redis redis-cli GET "order:state:<orderId>"
-   # Should return "cooked" (cooking done, notification pending)
-   ```
-5. Restart notification-hub:
-   ```bash
-   docker start notification-hub
-   ```
-6. BullMQ retries the job — this time it **skips cooking** (already cooked) and only retries the notification
-7. The Redis key updates to "completed"
+3. Optional quick check (single cycle):
 
-### Test I — Idempotency (Stock Deduction Replay Safety)
+```bash
+npm run watch:containers:once
+```
 
-1. Place an order from `/order` (the UI sends an `Idempotency-Key` header)
-2. Retry the same request with the same `Idempotency-Key`
-3. Expected: stock-service returns the cached success payload and does **not** double-decrement stock
+### Optional tuning
+- `CONTAINER_WATCH_INTERVAL_MS` (default: `5000`)
+- `CONTAINER_RESTART_COOLDOWN_MS` (default: `15000`)
+- `CONTAINER_RESTART_UNHEALTHY` (default: `false`)
 
-### Expected Error Responses
+Example with custom interval and unhealthy recovery:
 
-| Scenario | Status | Response |
-|----------|--------|----------|
-| Missing/invalid JWT | `401` | `{ "error": "..." }` |
-| Zero stock in cache | `400` | `{ "error": "Out of Stock" }` |
-| Insufficient stock in DB | `400` | `{ "error": "Insufficient stock" }` |
-| Optimistic lock conflict | `409` | `{ "error": "Conflict during deduction, please retry" }` |
-| Rate limit exceeded (login) | `429` | `{ "error": "Too many login attempts..." }` |
+```bash
+CONTAINER_WATCH_INTERVAL_MS=2000 CONTAINER_RESTART_UNHEALTHY=true npm run watch:containers
+```
+
+### Troubleshooting
+- If `watch:containers` exits, run `watch:containers:once` to inspect behavior quickly.
+- Ensure Docker Desktop is running and `docker compose ps` works in the repo root.
+- Keep watcher in its own terminal session; stopping that terminal stops the watcher.
 
 ---
 
-## 4) Local Development (Without Docker)
+## 7) Local Development (Without Full Docker)
 
-You'll need Redis and PostgreSQL running locally (or via Docker for infra only).
-
-### Infrastructure only:
+Bring up infra only:
 
 ```bash
 docker compose up -d redis db
 ```
 
-### Then run each service:
+Then run services individually:
 
 ```bash
-# Identity Provider
+# identity-provider
 cd identity-provider && npm install && npm run dev
-# Needs: JWT_SECRET=supersecret2026 REDIS_URL=redis://localhost:6379 PORT=3001
 
-# Order Gateway
+# order-gateway
 cd order-gateway && npm install && npm run dev
-# Needs: JWT_SECRET=supersecret2026 REDIS_URL=redis://localhost:6379 STOCK_SERVICE_URL=http://localhost:3002 PORT=3000 QUEUE_NAME=cook_order
 
-# Stock Service
+# stock-service
 cd stock-service && npm install && npm run dev
-# Needs: DATABASE_URL=postgres://user:pass@localhost:5432/cafeteria REDIS_URL=redis://localhost:6379 PORT=3002
 
-# Kitchen Queue
+# kitchen-queue
 cd kitchen-queue && npm install && npm run dev
-# Needs: REDIS_URL=redis://localhost:6379 NOTIFICATION_HUB_URL=http://localhost:3003 QUEUE_NAME=cook_order PORT=3005
 
-# Notification Hub
+# notification-hub
 cd notification-hub && npm install && npm run dev
-# Needs: PORT=3003 CORS_ORIGIN=http://localhost:3004
 
-# Student UI
+# student-ui
 cd student-ui && npm install && npm run dev
-# Uses: NEXT_PUBLIC_GATEWAY_URL=http://localhost:3000 NEXT_PUBLIC_IDENTITY_URL=http://localhost:3001 NEXT_PUBLIC_HUB_URL=http://localhost:3003
 ```
 
 ---
 
-## 5) Automated Tests
+## 8) Testing
 
-A system test script validates the full end-to-end flow:
+### Full system test
 
 ```bash
-# With Docker services running:
 npm run test
 ```
 
-Covers: health checks, login, JWT auth, order flow, cache pre-check, queue enqueue, kitchen processing, and notification broadcast.
+### Unit tests across services
+
+```bash
+npm run test:unit
+```
 
 ---
 
-## 6) Architecture
-
-```
-Student Browser
-    │
-    ├── POST /login ──────────► Identity Provider (3001)
-    │                              └── Redis (rate limiting)
-    │
-    ├── POST /order ──────────► Order Gateway (3000)
-    │                              ├── Redis (cache pre-check)
-    │                              ├── Stock Service (3002)
-    │                              │     ├── PostgreSQL (optimistic locking)
-    │                              │     └── Redis (cache sync)
-    │                              └── BullMQ Queue (Redis)
-    │                                    │
-    │                                    ▼
-    │                              Kitchen Worker (3005)
-    │                                    ├── Redis (idempotency keys)
-    │                                    └── POST /notify
-    │                                          │
-    │                                          ▼
-    └── Socket.io ◄───────────── Notification Hub (3003)
-```
-
-### Technology Stack
-
-- **Backend**: Node.js 20 + Express + TypeScript
-- **Database**: PostgreSQL 16 (optimistic locking with `version` column)
-- **Cache/Queue**: Redis 7 (caching, BullMQ, rate limiting, idempotency)
-- **Real-time**: Socket.io
-- **Frontend**: Next.js 16 (App Router) + Tailwind CSS
-- **Observability**: Prometheus metrics via `prom-client`
-- **Containerization**: Docker + Docker Compose (single `docker compose up`)
-
----
-
-## 7) Database Schema
+## 9) Database Schema
 
 ```sql
 CREATE TABLE items (
@@ -281,13 +313,4 @@ CREATE TABLE items (
 );
 ```
 
-Seeded with `iftar-box-01` (qty 50) and `iftar-box-02` (qty 50).
-
----
-
-## 8) What's Next (Day 5)
-
-- CI/CD pipeline with GitHub Actions
-- Unit tests for stock deduction and queue processing
-- Full `docker compose up --build` deploy to AWS EC2
-- Chaos engineering toggle for resilience testing
+Seed examples are included in `db/init/001_init.sql`.
