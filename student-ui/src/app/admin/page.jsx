@@ -253,7 +253,7 @@ export default function AdminPage() {
     if (!isAuthenticated) return;
     
     fetchHealth();
-    const interval = setInterval(fetchHealth, 5000);
+    const interval = setInterval(fetchHealth, 2000);
     return () => clearInterval(interval);
   }, [fetchHealth, isAuthenticated]);
 

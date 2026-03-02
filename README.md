@@ -101,7 +101,7 @@ docker compose down -v
 3. The **kitchen-queue** card additionally shows queue stats: waiting / active / completed / failed
 4. The **notification-hub** card shows the count of active socket connections
 5. Use **Kill Gateway / Recover Gateway** button to simulate manual service kill and recovery
-6. The dashboard auto-refreshes every 5 seconds. Click "Refresh Now" for an immediate poll
+6. The dashboard auto-refreshes every 1 second. Click "Refresh Now" for an immediate poll
 7. **Test degraded state**: stop a dependency (e.g., `docker stop redis`) and watch services report degraded/unreachable behavior. Restart with `docker start redis`
 
 ### Test F — Health Endpoints (curl)
@@ -231,6 +231,34 @@ npm run test
 ```
 
 Covers: health checks, login, JWT auth, order flow, cache pre-check, queue enqueue, kitchen processing, and notification broadcast.
+
+---
+
+## 5.1) Container Auto-Heal Watcher
+
+You can run a small watcher that checks Docker Compose services and auto-recovers any service that is down by running:
+
+```bash
+docker compose up -d <service>
+```
+
+Start continuous watcher:
+
+```bash
+npm run watch:containers
+```
+
+Run one check cycle only:
+
+```bash
+npm run watch:containers:once
+```
+
+Optional environment variables:
+
+- `CONTAINER_WATCH_INTERVAL_MS` (default `5000`)
+- `CONTAINER_RESTART_COOLDOWN_MS` (default `15000`)
+- `CONTAINER_RESTART_UNHEALTHY` (`true`/`false`, default `false`)
 
 ---
 
