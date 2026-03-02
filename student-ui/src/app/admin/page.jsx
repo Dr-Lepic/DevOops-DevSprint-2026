@@ -134,7 +134,7 @@ export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
-  const [chaosKilled, setChaosKilled] = useState(false);
+  const [serviceKillStates, setServiceKillStates] = useState({});
   const metricsCountersRef = useRef({});
   const lastPollMsRef = useRef(null);
 
@@ -220,10 +220,19 @@ export default function AdminPage() {
       }
     });
 
-    try {
-      const chaosStateResponse = await axios.get(`${serviceUrls['order-gateway']}/chaos/state`, { timeout: 2000 });
-      setChaosKilled(Boolean(chaosStateResponse.data?.killed));
-    } catch {}
+    // Fetch chaos state for all services
+    const chaosStates = {};
+    await Promise.allSettled(
+      SERVICES.map(async (service) => {
+        try {
+          const response = await axios.get(`${serviceUrls[service.key]}/chaos/state`, { timeout: 2000 });
+          chaosStates[service.key] = Boolean(response.data?.killed);
+        } catch {
+          chaosStates[service.key] = false;
+        }
+      })
+    );
+    setServiceKillStates(chaosStates);
 
     setHealthData(newData);
     metricsCountersRef.current = nextCounters;
@@ -231,6 +240,22 @@ export default function AdminPage() {
     setLastPoll(new Date());
     setPolling(false);
   }, [serviceUrls]);
+
+  const toggleServiceKill = async (serviceKey) => {
+    const currentlyKilled = serviceKillStates[serviceKey] || false;
+    const target = currentlyKilled ? 'recover' : 'kill';
+    
+    try {
+      await axios.post(`${serviceUrls[serviceKey]}/chaos/${target}`);
+      setServiceKillStates(prev => ({
+        ...prev,
+        [serviceKey]: !currentlyKilled
+      }));
+      await fetchHealth();
+    } catch (error) {
+      console.error(`Failed to ${target} ${serviceKey}:`, error);
+    }
+  };
 
   const toggleChaosKill = async () => {
     const target = chaosKilled ? 'recover' : 'kill';
@@ -367,17 +392,6 @@ export default function AdminPage() {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={toggleChaosKill}
-                  className={`px-5 py-2.5 border-2 rounded-lg text-sm font-medium transition-colors shadow-sm ${
-                    chaosKilled
-                      ? 'bg-green-50 border-green-300 hover:bg-green-100 text-green-700'
-                      : 'bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-800'
-                  }`}
-                >
-                  {chaosKilled ? 'Recover Gateway' : 'Kill Gateway'}
-                </button>
-                <button
-                  type="button"
                   onClick={fetchHealth}
                   className="flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-gray-300 hover:border-indigo-500 rounded-lg text-sm font-medium text-gray-700 hover:text-indigo-600 transition-colors shadow-sm"
                   disabled={polling}
@@ -450,6 +464,7 @@ export default function AdminPage() {
               const data = healthData[svc.key];
               const isDown = !data || data.status === 'down';
               const isDegraded = data?.status === 'degraded';
+              const isKilled = serviceKillStates[svc.key] || false;
 
               return (
                 <div
@@ -573,6 +588,21 @@ export default function AdminPage() {
                         Checked: {new Date(data.lastChecked).toLocaleTimeString()}
                       </p>
                     )}
+
+                    {/* Kill Service Button */}
+                    <div className="pt-3 border-t border-gray-200">
+                      <button
+                        type="button"
+                        onClick={() => toggleServiceKill(svc.key)}
+                        className={`w-full px-4 py-2.5 border-2 rounded-lg text-sm font-medium transition-all shadow-sm ${
+                          isKilled
+                            ? 'bg-green-50 border-green-300 hover:bg-green-100 text-green-700'
+                            : 'bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {isKilled ? '🔄 Recover Service' : '💀 Kill Service'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
