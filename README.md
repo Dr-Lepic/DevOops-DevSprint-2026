@@ -1,4 +1,4 @@
-# DevSprint 2026 — IUT Cafeteria Microservice System
+# DevSprint 2026 — IUT Cafeteria Microservice System (🏆Champion Submission)
 
 A distributed, containerized cafeteria ordering platform designed for high-traffic bursts with authentication, stock safety, async kitchen processing, realtime notifications, and admin observability.
 
