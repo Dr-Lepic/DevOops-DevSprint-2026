@@ -44,3 +44,5 @@ yarn-error.log*
 *.tsbuildinfo
 */next-env.d.ts
 phase-1-mvp.md
+
+temp_docs/
